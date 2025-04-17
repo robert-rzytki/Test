@@ -30,13 +30,13 @@ on:
           - directory
         default: 'yaml'
       selectionMode:
-        description: 'Resource Selection Mode - default "all"'
+        description: 'Resource Selection Mode'
         required: true
         type: choice
         options:
           - all
-          - include only (only migrate selected resource groups)
-          - exclude only (migrate everything EXCEPT selected resource groups)
+          - include-only (only migrate selected resource groups)
+          - exclude-only (migrate everything EXCEPT selected resource groups)
         default: 'all'
       identityResources:
         description: 'Identity Resources (connections, databases, organizations, roles)'
@@ -63,11 +63,14 @@ on:
         required: false
         type: boolean
         default: false
-      allowDelete:
-        description: 'Allow deletion of resources in target environment'
+      deletionMode:
+        description: 'Deletion mode for target environment'
         required: true
-        type: boolean
-        default: false
+        type: choice
+        options:
+          - no_deletion
+          - allow_deletion_with_confirmation
+        default: 'no_deletion'
 
 jobs:
   migrate:
@@ -153,7 +156,7 @@ jobs:
             "AUTH0_DOMAIN": "${{ secrets[format('AUTH0_DOMAIN_{0}', github.event.inputs.targetEnv)] }}",
             "AUTH0_CLIENT_ID": "${{ secrets[format('AUTH0_CLIENT_ID_{0}', github.event.inputs.targetEnv)] }}",
             "AUTH0_CLIENT_SECRET": "${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', github.event.inputs.targetEnv)] }}",
-            "AUTH0_ALLOW_DELETE": ${{ github.event.inputs.allowDelete }}${MODE_JSON}
+            "AUTH0_ALLOW_DELETE": ${{ github.event.inputs.deletionMode == 'allow_deletion_with_confirmation' }}${MODE_JSON}
           }
           EOF
 
@@ -165,6 +168,15 @@ jobs:
             --format=${{ github.event.inputs.format }} \
             --output_folder=auth0-export \
             --debug
+
+      - name: Warning for Deletion Mode
+        if: github.event.inputs.deletionMode == 'allow_deletion_with_confirmation'
+        run: |
+          echo "⚠️ WARNING: DELETION MODE IS ENABLED ⚠️"
+          echo "This operation may DELETE resources in the target environment: ${{ github.event.inputs.targetEnv }}"
+          echo "Proceeding in 10 seconds. Press Ctrl+C to abort..."
+          sleep 10
+          echo "Proceeding with import operation..."
 
       - name: Import to Target Environment
         run: |
