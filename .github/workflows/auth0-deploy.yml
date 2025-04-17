@@ -34,103 +34,32 @@ on:
         required: true
         type: choice
         options:
+          - all
           - include_only
           - exclude_only
-          - all
         default: 'all'
-      # Resource Selection Checkboxes
-      actions:
-        description: 'Actions'
+      identityResources:
+        description: 'Identity Resources (connections, databases, organizations, roles)'
         required: false
         type: boolean
         default: false
-      attackProtection:
-        description: 'Attack Protection'
+      applicationResources:
+        description: 'Application Resources (clients, client grants, resource servers)'
         required: false
         type: boolean
         default: false
-      branding:
-        description: 'Branding'
+      securityResources:
+        description: 'Security Resources (attack protection, guardian factors)'
         required: false
         type: boolean
         default: false
-      clientGrants:
-        description: 'Client Grants'
+      customizationResources:
+        description: 'Customization Resources (branding, pages, prompts, email templates)'
         required: false
         type: boolean
         default: false
-      clients:
-        description: 'Clients (Applications)'
-        required: false
-        type: boolean
-        default: false
-      connections:
-        description: 'Connections'
-        required: false
-        type: boolean
-        default: false
-      customDomains:
-        description: 'Custom Domains'
-        required: false
-        type: boolean
-        default: false
-      databases:
-        description: 'Databases'
-        required: false
-        type: boolean
-        default: false
-      emailProvider:
-        description: 'Email Provider'
-        required: false
-        type: boolean
-        default: false
-      emailTemplates:
-        description: 'Email Templates'
-        required: false
-        type: boolean
-        default: false
-      guardianFactors:
-        description: 'Guardian Factors'
-        required: false
-        type: boolean
-        default: false
-      logStreams:
-        description: 'Log Streams'
-        required: false
-        type: boolean
-        default: false
-      organizations:
-        description: 'Organizations'
-        required: false
-        type: boolean
-        default: false
-      pages:
-        description: 'Pages'
-        required: false
-        type: boolean
-        default: false
-      prompts:
-        description: 'Prompts'
-        required: false
-        type: boolean
-        default: false
-      resourceServers:
-        description: 'Resource Servers (APIs)'
-        required: false
-        type: boolean
-        default: false
-      roles:
-        description: 'Roles'
-        required: false
-        type: boolean
-        default: false
-      tenant:
-        description: 'Tenant Settings'
-        required: false
-        type: boolean
-        default: false
-      triggers:
-        description: 'Triggers'
+      actionResources:
+        description: 'Action Resources (actions, triggers)'
         required: false
         type: boolean
         default: false
@@ -176,69 +105,32 @@ jobs:
           # Initialize arrays for selected resources
           SELECTED_RESOURCES=()
           
-          # Check which resources are selected
-          if [[ "${{ github.event.inputs.actions }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("actions")
+          # Check which resource groups are selected and add their resources
+          if [[ "${{ github.event.inputs.identityResources }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("connections" "databases" "organizations" "roles")
           fi
-          if [[ "${{ github.event.inputs.attackProtection }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("attackProtection")
+          
+          if [[ "${{ github.event.inputs.applicationResources }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("clients" "clientGrants" "resourceServers")
           fi
-          if [[ "${{ github.event.inputs.branding }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("branding")
+          
+          if [[ "${{ github.event.inputs.securityResources }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("attackProtection" "guardianFactors" "guardianFactorProviders" "guardianFactorTemplates" "guardianPolicies")
           fi
-          if [[ "${{ github.event.inputs.clientGrants }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("clientGrants")
+          
+          if [[ "${{ github.event.inputs.customizationResources }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("branding" "pages" "prompts" "emailTemplates" "emailProvider" "customDomains")
           fi
-          if [[ "${{ github.event.inputs.clients }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("clients")
-          fi
-          if [[ "${{ github.event.inputs.connections }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("connections")
-          fi
-          if [[ "${{ github.event.inputs.customDomains }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("customDomains")
-          fi
-          if [[ "${{ github.event.inputs.databases }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("databases")
-          fi
-          if [[ "${{ github.event.inputs.emailProvider }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("emailProvider")
-          fi
-          if [[ "${{ github.event.inputs.emailTemplates }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("emailTemplates")
-          fi
-          if [[ "${{ github.event.inputs.guardianFactors }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("guardianFactors")
-          fi
-          if [[ "${{ github.event.inputs.logStreams }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("logStreams")
-          fi
-          if [[ "${{ github.event.inputs.organizations }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("organizations")
-          fi
-          if [[ "${{ github.event.inputs.pages }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("pages")
-          fi
-          if [[ "${{ github.event.inputs.prompts }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("prompts")
-          fi
-          if [[ "${{ github.event.inputs.resourceServers }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("resourceServers")
-          fi
-          if [[ "${{ github.event.inputs.roles }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("roles")
-          fi
-          if [[ "${{ github.event.inputs.tenant }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("tenant")
-          fi
-          if [[ "${{ github.event.inputs.triggers }}" == "true" ]]; then
-            SELECTED_RESOURCES+=("triggers")
+          
+          if [[ "${{ github.event.inputs.actionResources }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("actions" "triggers")
           fi
           
           # Check if any resources are selected
-          if [ ${#SELECTED_RESOURCES[@]} -eq 0 ]; then
-            # If no resources selected, use the default (all resources)
+          if [ ${#SELECTED_RESOURCES[@]} -eq 0 ] || [[ "${{ github.event.inputs.selectionMode }}" == "all" ]]; then
+            # If no resources selected or mode is "all", don't specify any resource filter
             MODE_JSON=""
+            echo "Using all resources (no filtering)"
           else
             # Create JSON array from selected resources
             RESOURCES_JSON=$(printf '"%s",' "${SELECTED_RESOURCES[@]}" | sed 's/,$//')
@@ -246,8 +138,10 @@ jobs:
             # Apply the selection mode
             if [[ "${{ github.event.inputs.selectionMode }}" == "include_only" ]]; then
               MODE_JSON=', "AUTH0_INCLUDED_ONLY": ['$RESOURCES_JSON']'
+              echo "Including only: ${SELECTED_RESOURCES[*]}"
             elif [[ "${{ github.event.inputs.selectionMode }}" == "exclude_only" ]]; then
               MODE_JSON=', "AUTH0_EXCLUDED": ['$RESOURCES_JSON']'
+              echo "Excluding: ${SELECTED_RESOURCES[*]}"
             else
               MODE_JSON=""
             fi
@@ -262,9 +156,6 @@ jobs:
             "AUTH0_ALLOW_DELETE": ${{ github.event.inputs.allowDelete }}${MODE_JSON}
           }
           EOF
-          
-          echo "Config created with selection mode: ${{ github.event.inputs.selectionMode }}"
-          echo "Selected resources: ${SELECTED_RESOURCES[*]}"
 
       - name: Export from Source Environment
         run: |
