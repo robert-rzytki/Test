@@ -29,14 +29,111 @@ on:
           - yaml
           - directory
         default: 'yaml'
-      includeResources:
-        description: 'Resources to include (comma-separated list, leave empty to include all)'
+      selectionMode:
+        description: 'Resource Selection Mode'
+        required: true
+        type: choice
+        options:
+          - include_only
+          - exclude_only
+          - all
+        default: 'all'
+      # Resource Selection Checkboxes
+      actions:
+        description: 'Actions'
         required: false
-        type: string
-      excludeResources:
-        description: 'Resources to exclude (comma-separated list)'
+        type: boolean
+        default: false
+      attackProtection:
+        description: 'Attack Protection'
         required: false
-        type: string
+        type: boolean
+        default: false
+      branding:
+        description: 'Branding'
+        required: false
+        type: boolean
+        default: false
+      clientGrants:
+        description: 'Client Grants'
+        required: false
+        type: boolean
+        default: false
+      clients:
+        description: 'Clients (Applications)'
+        required: false
+        type: boolean
+        default: false
+      connections:
+        description: 'Connections'
+        required: false
+        type: boolean
+        default: false
+      customDomains:
+        description: 'Custom Domains'
+        required: false
+        type: boolean
+        default: false
+      databases:
+        description: 'Databases'
+        required: false
+        type: boolean
+        default: false
+      emailProvider:
+        description: 'Email Provider'
+        required: false
+        type: boolean
+        default: false
+      emailTemplates:
+        description: 'Email Templates'
+        required: false
+        type: boolean
+        default: false
+      guardianFactors:
+        description: 'Guardian Factors'
+        required: false
+        type: boolean
+        default: false
+      logStreams:
+        description: 'Log Streams'
+        required: false
+        type: boolean
+        default: false
+      organizations:
+        description: 'Organizations'
+        required: false
+        type: boolean
+        default: false
+      pages:
+        description: 'Pages'
+        required: false
+        type: boolean
+        default: false
+      prompts:
+        description: 'Prompts'
+        required: false
+        type: boolean
+        default: false
+      resourceServers:
+        description: 'Resource Servers (APIs)'
+        required: false
+        type: boolean
+        default: false
+      roles:
+        description: 'Roles'
+        required: false
+        type: boolean
+        default: false
+      tenant:
+        description: 'Tenant Settings'
+        required: false
+        type: boolean
+        default: false
+      triggers:
+        description: 'Triggers'
+        required: false
+        type: boolean
+        default: false
       allowDelete:
         description: 'Allow deletion of resources in target environment'
         required: true
@@ -76,27 +173,98 @@ jobs:
 
       - name: Create Target Config
         run: |
-          EXCLUDED_JSON=""
-          INCLUDED_JSON=""
+          # Initialize arrays for selected resources
+          SELECTED_RESOURCES=()
           
-          if [ ! -z "${{ github.event.inputs.excludeResources }}" ]; then
-            EXCLUDED_LIST=$(echo "${{ github.event.inputs.excludeResources }}" | sed 's/,/","/g')
-            EXCLUDED_JSON=', "AUTH0_EXCLUDED": ["'$EXCLUDED_LIST'"]'
+          # Check which resources are selected
+          if [[ "${{ github.event.inputs.actions }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("actions")
+          fi
+          if [[ "${{ github.event.inputs.attackProtection }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("attackProtection")
+          fi
+          if [[ "${{ github.event.inputs.branding }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("branding")
+          fi
+          if [[ "${{ github.event.inputs.clientGrants }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("clientGrants")
+          fi
+          if [[ "${{ github.event.inputs.clients }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("clients")
+          fi
+          if [[ "${{ github.event.inputs.connections }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("connections")
+          fi
+          if [[ "${{ github.event.inputs.customDomains }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("customDomains")
+          fi
+          if [[ "${{ github.event.inputs.databases }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("databases")
+          fi
+          if [[ "${{ github.event.inputs.emailProvider }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("emailProvider")
+          fi
+          if [[ "${{ github.event.inputs.emailTemplates }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("emailTemplates")
+          fi
+          if [[ "${{ github.event.inputs.guardianFactors }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("guardianFactors")
+          fi
+          if [[ "${{ github.event.inputs.logStreams }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("logStreams")
+          fi
+          if [[ "${{ github.event.inputs.organizations }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("organizations")
+          fi
+          if [[ "${{ github.event.inputs.pages }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("pages")
+          fi
+          if [[ "${{ github.event.inputs.prompts }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("prompts")
+          fi
+          if [[ "${{ github.event.inputs.resourceServers }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("resourceServers")
+          fi
+          if [[ "${{ github.event.inputs.roles }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("roles")
+          fi
+          if [[ "${{ github.event.inputs.tenant }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("tenant")
+          fi
+          if [[ "${{ github.event.inputs.triggers }}" == "true" ]]; then
+            SELECTED_RESOURCES+=("triggers")
           fi
           
-          if [ ! -z "${{ github.event.inputs.includeResources }}" ]; then
-            INCLUDED_LIST=$(echo "${{ github.event.inputs.includeResources }}" | sed 's/,/","/g')
-            INCLUDED_JSON=', "AUTH0_INCLUDED_ONLY": ["'$INCLUDED_LIST'"]'
+          # Check if any resources are selected
+          if [ ${#SELECTED_RESOURCES[@]} -eq 0 ]; then
+            # If no resources selected, use the default (all resources)
+            MODE_JSON=""
+          else
+            # Create JSON array from selected resources
+            RESOURCES_JSON=$(printf '"%s",' "${SELECTED_RESOURCES[@]}" | sed 's/,$//')
+            
+            # Apply the selection mode
+            if [[ "${{ github.event.inputs.selectionMode }}" == "include_only" ]]; then
+              MODE_JSON=', "AUTH0_INCLUDED_ONLY": ['$RESOURCES_JSON']'
+            elif [[ "${{ github.event.inputs.selectionMode }}" == "exclude_only" ]]; then
+              MODE_JSON=', "AUTH0_EXCLUDED": ['$RESOURCES_JSON']'
+            else
+              MODE_JSON=""
+            fi
           fi
           
+          # Create the final config file
           cat > target-config.json << EOF
           {
             "AUTH0_DOMAIN": "${{ secrets[format('AUTH0_DOMAIN_{0}', github.event.inputs.targetEnv)] }}",
             "AUTH0_CLIENT_ID": "${{ secrets[format('AUTH0_CLIENT_ID_{0}', github.event.inputs.targetEnv)] }}",
             "AUTH0_CLIENT_SECRET": "${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', github.event.inputs.targetEnv)] }}",
-            "AUTH0_ALLOW_DELETE": ${{ github.event.inputs.allowDelete }}${EXCLUDED_JSON}${INCLUDED_JSON}
+            "AUTH0_ALLOW_DELETE": ${{ github.event.inputs.allowDelete }}${MODE_JSON}
           }
           EOF
+          
+          echo "Config created with selection mode: ${{ github.event.inputs.selectionMode }}"
+          echo "Selected resources: ${SELECTED_RESOURCES[*]}"
 
       - name: Export from Source Environment
         run: |
