@@ -35,8 +35,8 @@ on:
         type: choice
         options:
           - all
-          - include_only
-          - exclude_only
+          - include only
+          - exclude only
         default: 'all'
       identityResources:
         description: 'Identity Resources (connections, databases, organizations, roles)'
