@@ -30,13 +30,13 @@ on:
           - directory
         default: 'yaml'
       selectionMode:
-        description: 'Resource Selection Mode'
+        description: 'Resource Selection Mode - default "all"'
         required: true
         type: choice
         options:
           - all
-          - include only
-          - exclude only
+          - include only (only migrate selected resource groups)
+          - exclude only (migrate everything EXCEPT selected resource groups)
         default: 'all'
       identityResources:
         description: 'Identity Resources (connections, databases, organizations, roles)'
