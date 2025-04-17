@@ -68,8 +68,8 @@ on:
         required: true
         type: choice
         options:
-          - no_deletion
-          - allow_deletion_with_confirmation
+          - no-deletion
+          - allow-deletion-with-confirmation
         default: 'no_deletion'
 
 jobs:
@@ -139,10 +139,10 @@ jobs:
             RESOURCES_JSON=$(printf '"%s",' "${SELECTED_RESOURCES[@]}" | sed 's/,$//')
             
             # Apply the selection mode
-            if [[ "${{ github.event.inputs.selectionMode }}" == "include_only" ]]; then
+            if [[ "${{ github.event.inputs.selectionMode }}" == "include-only (only migrate selected resource groups)" ]]; then
               MODE_JSON=', "AUTH0_INCLUDED_ONLY": ['$RESOURCES_JSON']'
               echo "Including only: ${SELECTED_RESOURCES[*]}"
-            elif [[ "${{ github.event.inputs.selectionMode }}" == "exclude_only" ]]; then
+            elif [[ "${{ github.event.inputs.selectionMode }}" == "exclude-only (migrate everything EXCEPT selected resource groups)" ]]; then
               MODE_JSON=', "AUTH0_EXCLUDED": ['$RESOURCES_JSON']'
               echo "Excluding: ${SELECTED_RESOURCES[*]}"
             else
@@ -156,7 +156,7 @@ jobs:
             "AUTH0_DOMAIN": "${{ secrets[format('AUTH0_DOMAIN_{0}', github.event.inputs.targetEnv)] }}",
             "AUTH0_CLIENT_ID": "${{ secrets[format('AUTH0_CLIENT_ID_{0}', github.event.inputs.targetEnv)] }}",
             "AUTH0_CLIENT_SECRET": "${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', github.event.inputs.targetEnv)] }}",
-            "AUTH0_ALLOW_DELETE": ${{ github.event.inputs.deletionMode == 'allow_deletion_with_confirmation' }}${MODE_JSON}
+            "AUTH0_ALLOW_DELETE": ${{ github.event.inputs.deletionMode == 'allow-deletion-with-confirmation' }}${MODE_JSON}
           }
           EOF
 
@@ -170,7 +170,7 @@ jobs:
             --debug
 
       - name: Warning for Deletion Mode
-        if: github.event.inputs.deletionMode == 'allow_deletion_with_confirmation'
+        if: github.event.inputs.deletionMode == 'allow-deletion-with-confirmation'
         run: |
           echo "⚠️ WARNING: DELETION MODE IS ENABLED ⚠️"
           echo "This operation may DELETE resources in the target environment: ${{ github.event.inputs.targetEnv }}"
