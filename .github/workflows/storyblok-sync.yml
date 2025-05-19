@@ -1,0 +1,98 @@
+name: Storyblok Sync Spaces
+
+on:
+  workflow_dispatch: 
+    inputs:
+      source_space_name:
+        description: 'Source Space'
+        required: true
+        type: choice
+        options: 
+          - dev_bdb-portal
+          - stage_bdb-portal
+          - preprod_bdb-portal
+          - prod_bdb-portal
+          
+      target_space_name:
+        description: 'Target Space'
+        required: true
+        type: choice
+        options: 
+          - dev_bdb-portal
+          - stage_bdb-portal
+          - preprod_bdb-portal
+          - prod_bdb-portal
+          
+      sync_types:
+        description: 'Types to sync (comma-separated: components,datasources,stories,folders,roles)'
+        required: true
+        default: 'components,datasources'
+        type: string
+
+jobs:
+  sync_storyblok_data:
+    name: Sync Storyblok Data
+    runs-on: ubuntu-latest 
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18' # Or your preferred Node.js version
+
+      - name: Install Storyblok CLI
+        run: npm install -g storyblok
+
+      - name: Authenticate with Storyblok
+        run: storyblok login --token ${{ secrets.STORYBLOK_PERSONAL_ACCESS_TOKEN }} --region eu
+
+      - name: Resolve Space IDs and Perform Sync
+        env: 
+          SOURCE_NAME: ${{ github.event.inputs.source_space_name }}
+          TARGET_NAME: ${{ github.event.inputs.target_space_name }}
+          SYNC_TYPES: ${{ github.event.inputs.sync_types }}
+        run: |
+          get_space_id() {
+            local friendly_name="$1"
+            local space_id=""
+            case "$friendly_name" in
+              "dev_bdb-portal")
+                space_id="#303117"
+                ;;
+              "stage_bdb-portal")
+                space_id="#326209" 
+                ;;
+              "preprod_bdb-portal")
+                space_id="#326923" 
+                ;;
+              "prod_bdb-portal")
+                space_id="#326925" 
+                ;;
+              *)
+                echo "Error: Unknown space name '$friendly_name'. Please check the workflow configuration." >&2
+                exit 1
+                ;;
+            esac
+            echo "$space_id"
+          }
+
+          # Resolve the actual Space IDs
+          SOURCE_SPACE_ID=$(get_space_id "$SOURCE_NAME")
+          TARGET_SPACE_ID=$(get_space_id "$TARGET_NAME")
+
+          # Validate that IDs were resolved
+          if [ -z "$SOURCE_SPACE_ID" ] || [ -z "$TARGET_SPACE_ID" ]; then
+            echo "Error: Could not resolve one or both Space IDs from names." >&2
+            exit 1
+          fi
+
+          echo "Starting sync from Source Space: $SOURCE_NAME (ID: $SOURCE_SPACE_ID) to Target Space: $TARGET_NAME (ID: $TARGET_SPACE_ID)"
+          echo "Syncing types: $SYNC_TYPES"
+
+          storyblok sync --type "$SYNC_TYPES" --source "$SOURCE_SPACE_ID" --target "$TARGET_SPACE_ID"
+
+      - name: Sync Operation Complete
+        run: echo "Storyblok sync finished successfully!"
