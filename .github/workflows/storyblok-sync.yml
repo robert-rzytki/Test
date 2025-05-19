@@ -22,17 +22,36 @@ on:
           - stage_bdb-portal
           - preprod_bdb-portal
           - prod_bdb-portal
-          
-      sync_types:
-        description: 'Types to sync (comma-separated: components,datasources,stories,folders,roles)'
-        required: true
-        default: 'components,datasources'
-        type: string
+
+      sync_components:
+        description: 'Sync Components'
+        type: boolean
+        default: true
+
+      sync_datasources:
+        description: 'Sync Datasources'
+        type: boolean
+        default: true
+
+      sync_stories:
+        description: 'Sync Stories'
+        type: boolean
+        default: false
+
+      sync_folders:
+        description: 'Sync Folders'
+        type: boolean
+        default: false
+
+      sync_roles:
+        description: 'Sync Roles'
+        type: boolean
+        default: false
 
 jobs:
   sync_storyblok_data:
     name: Sync Storyblok Data
-    runs-on: ubuntu-latest 
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -41,7 +60,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18' # Or your preferred Node.js version
+          node-version: '18' # Can be changed to other version
 
       - name: Install Storyblok CLI
         run: npm install -g storyblok
@@ -49,50 +68,109 @@ jobs:
       - name: Authenticate with Storyblok
         run: storyblok login --token ${{ secrets.STORYBLOK_PERSONAL_ACCESS_TOKEN }} --region eu
 
-      - name: Resolve Space IDs and Perform Sync
-        env: 
-          SOURCE_NAME: ${{ github.event.inputs.source_space_name }}
-          TARGET_NAME: ${{ github.event.inputs.target_space_name }}
-          SYNC_TYPES: ${{ github.event.inputs.sync_types }}
+      - name: Prepare Sync Parameters and Execute
+
+        env:
+
+          DEV_ENV: ${{ secrets.STORYBLOK_SPACE_ID_DEV }} 
+          STAGE_ENV: ${{ secrets.STORYBLOK_SPACE_ID_STAGE }} 
+          PREPROD_ENV: ${{ secrets.STORYBLOK_SPACE_ID_PREPROD }} 
+          PROD_ENV: ${{ secrets.STORYBLOK_SPACE_ID_PROD }} 
+
+          # Inputs for selected space names
+          INPUT_SOURCE_NAME: ${{ github.event.inputs.source_space_name }}
+          INPUT_TARGET_NAME: ${{ github.event.inputs.target_space_name }}
+
+          # Inputs for sync types (booleans)
+          INPUT_SYNC_COMPONENTS: ${{ github.event.inputs.sync_components }}
+          INPUT_SYNC_DATASOURCES: ${{ github.event.inputs.sync_datasources }}
+          INPUT_SYNC_STORIES: ${{ github.event.inputs.sync_stories }}
+          INPUT_SYNC_FOLDERS: ${{ github.event.inputs.sync_folders }}
+          INPUT_SYNC_ROLES: ${{ github.event.inputs.sync_roles }}
         run: |
-          get_space_id() {
-            local friendly_name="$1"
-            local space_id=""
-            case "$friendly_name" in
+          echo "Preparing sync parameters..."
+
+          # --- 1. Construct Sync Types String ---
+          SYNC_TYPES_ARRAY=()
+          if [ "$INPUT_SYNC_COMPONENTS" == "true" ]; then
+            SYNC_TYPES_ARRAY+=("components")
+          fi
+          if [ "$INPUT_SYNC_DATASOURCES" == "true" ]; then
+            SYNC_TYPES_ARRAY+=("datasources")
+          fi
+          if [ "$INPUT_SYNC_STORIES" == "true" ]; then
+            SYNC_TYPES_ARRAY+=("stories")
+          fi
+          if [ "$INPUT_SYNC_FOLDERS" == "true" ]; then
+            SYNC_TYPES_ARRAY+=("folders")
+          fi
+          if [ "$INPUT_SYNC_ROLES" == "true" ]; then
+            SYNC_TYPES_ARRAY+=("roles")
+          fi
+
+          # Join array elements with a comma
+          SYNC_TYPES_STRING=$(IFS=,; echo "${SYNC_TYPES_ARRAY[*]}")
+
+          if [ -z "$SYNC_TYPES_STRING" ]; then
+            echo "Error: No sync types selected. Please select at least one type to sync." >&2
+            exit 1
+          fi
+          echo "Sync types to process: $SYNC_TYPES_STRING"
+
+
+          # Function to map space names to the ENVIRONMENT VARIABLE that holds the Space ID secret
+          get_env_var_for_space_id() {
+            local space_name="$1"
+            local env_var_name_for_id=""
+            case "$space_name" in
               "dev_bdb-portal")
-                space_id="#303117"
+                env_var_name_for_id="DEV_ENV"
                 ;;
               "stage_bdb-portal")
-                space_id="#326209" 
+                env_var_name_for_id="STAGE_ENV"
                 ;;
               "preprod_bdb-portal")
-                space_id="#326923" 
+                env_var_name_for_id="PREPROD_ENV"
                 ;;
               "prod_bdb-portal")
-                space_id="#326925" 
+                env_var_name_for_id="PROD_ENV"
                 ;;
               *)
-                echo "Error: Unknown space name '$friendly_name'. Please check the workflow configuration." >&2
+                echo "Error: Unknown space name '$space_name'. Cannot map to a secret. Please check the workflow 'options' and the 'case' statement in the 'Prepare Sync Parameters' step." >&2
                 exit 1
                 ;;
             esac
-            echo "$space_id"
+            echo "$env_var_name_for_id"
           }
 
-          # Resolve the actual Space IDs
-          SOURCE_SPACE_ID=$(get_space_id "$SOURCE_NAME")
-          TARGET_SPACE_ID=$(get_space_id "$TARGET_NAME")
+          # Resolve the environment variable names for source and target space IDs
+          SOURCE_SPACE_ID_ENV_VAR_NAME=$(get_env_var_for_space_id "$INPUT_SOURCE_NAME")
+          TARGET_SPACE_ID_ENV_VAR_NAME=$(get_env_var_for_space_id "$INPUT_TARGET_NAME")
 
-          # Validate that IDs were resolved
-          if [ -z "$SOURCE_SPACE_ID" ] || [ -z "$TARGET_SPACE_ID" ]; then
-            echo "Error: Could not resolve one or both Space IDs from names." >&2
+          # Get the actual Space IDs by indirect expansion (accessing the value of the variable whose name is stored)
+          SOURCE_SPACE_ID="${!SOURCE_SPACE_ID_ENV_VAR_NAME}"
+          TARGET_SPACE_ID="${!TARGET_SPACE_ID_ENV_VAR_NAME}"
+
+          # Validate that IDs were resolved (i.e., the secrets were not empty)
+          if [ -z "$SOURCE_SPACE_ID" ]; then
+            echo "Error: Source Space ID for '$INPUT_SOURCE_NAME' is empty. Ensure the secret '$SOURCE_SPACE_ID_ENV_VAR_NAME' is set and not empty in GitHub secrets and correctly mapped in the 'env' block of this step." >&2
+            exit 1
+          fi
+          if [ -z "$TARGET_SPACE_ID" ]; then
+            echo "Error: Target Space ID for '$INPUT_TARGET_NAME' is empty. Ensure the secret '$TARGET_SPACE_ID_ENV_VAR_NAME' is set and not empty in GitHub secrets and correctly mapped in the 'env' block of this step." >&2
             exit 1
           fi
 
-          echo "Starting sync from Source Space: $SOURCE_NAME (ID: $SOURCE_SPACE_ID) to Target Space: $TARGET_NAME (ID: $TARGET_SPACE_ID)"
-          echo "Syncing types: $SYNC_TYPES"
+          if [ "$SOURCE_SPACE_ID" == "$TARGET_SPACE_ID" ]; then
+            echo "Error: Source Space ID ('$SOURCE_SPACE_ID' for '$INPUT_SOURCE_NAME') and Target Space ID ('$TARGET_SPACE_ID' for '$INPUT_TARGET_NAME') are the same." >&2
+            echo "Sync operation aborted to prevent accidental self-syncing." >&2
+            exit 1
+          fi
 
-          storyblok sync --type "$SYNC_TYPES" --source "$SOURCE_SPACE_ID" --target "$TARGET_SPACE_ID"
+          echo "Attempting sync from Source: $INPUT_SOURCE_NAME (ID: $SOURCE_SPACE_ID) to Target: $INPUT_TARGET_NAME (ID: $TARGET_SPACE_ID)"
+
+          # --- 3. Perform Storyblok Sync ---
+          storyblok sync --type "$SYNC_TYPES_STRING" --source "$SOURCE_SPACE_ID" --target "$TARGET_SPACE_ID"
 
       - name: Sync Operation Complete
         run: echo "Storyblok sync finished successfully!"
