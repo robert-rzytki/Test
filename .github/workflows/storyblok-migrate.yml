@@ -32,7 +32,7 @@ on:
           - folders
           - roles
       item_names:
-        description: 'Comma-separated names/slugs of items to migrate (e.g., my-component,global-data,about-us-story). For stories/folders, use slug/path.'
+        description: 'Comma-separated names/slugs of items to migrate (e.g., translations,permissions). For stories/folders, use slug/path.'
         required: true
         type: string
 
