@@ -66,7 +66,7 @@ jobs:
         run: npm install -g storyblok
 
       - name: Authenticate with Storyblok
-        run: storyblok login --token ${{ secrets.STORYBLOK_PERSONAL_ACCESS_TOKEN }} --region eu
+        run: storyblok login --token ${{ secrets.STORYBLOK_SERVICE_ACCOUNT_ACCESS_TOKEN }} --region eu
 
       - name: Prepare Sync Parameters and Execute
 
