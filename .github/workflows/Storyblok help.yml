@@ -1,0 +1,26 @@
+name: Check Storyblok Sync Help
+
+on:
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  show_sync_help:
+    name: Show Storyblok Sync Help
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18' # Or your preferred LTS Node.js version
+
+      - name: Install Storyblok CLI
+        run: npm install -g storyblok
+
+      - name: Display Storyblok Sync Help
+        run: |
+          echo "Attempting to display help for 'storyblok sync'..."
+          storyblok sync --help
+          echo "----------------------------------------------------"
+          echo "Also displaying general Storyblok CLI help for context:"
+          storyblok --help
