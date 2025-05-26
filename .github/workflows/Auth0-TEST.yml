@@ -1,4 +1,4 @@
-name: [TEST] Auth0 Environment Migration
+name: Auth0 Environment Migration TEST
 
 on:
   workflow_dispatch:
