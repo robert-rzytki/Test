@@ -35,7 +35,7 @@ on:
         description: 'Comma-separated list of resources (actions,clients,roles,etc.). Empty for all, "NONE" for none.'
         required: false
         type: string
-        default: '' # Default to empty, meaning all allowed resources
+        default: ''
       deletionMode:
         description: 'Deletion mode for target environment'
         required: true
@@ -56,24 +56,24 @@ on:
 jobs:
   migrate:
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.targetEnv }} # Optional: for GitHub Environments feature
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 # Updated to v4
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4 # Updated to v4
+        uses: actions/setup-node@v4
         with:
-          node-version: '18' # LTS version
+          node-version: '18'
 
-      - name: Install Auth0 Deploy CLI and jq
-        run: |
-          npm install -g auth0-deploy-cli
-          sudo apt-get update && sudo apt-get install -y jq
+      - name: Install Auth0 Deploy CLI
+        run: npm install -g auth0-deploy-cli
 
       - name: Validate Environment Selection
-        if: github.event.inputs.sourceEnv == github.event.inputs.targetEnv
+        if: github.event.inputs.sourceEnv == github.event.inputs.targetEnv && github.event.inputs.operation_mode == 'import_to_target'
         run: |
-          echo "ERROR: Source and target environments cannot be the same!"
+          echo "ERROR: Source and target environments cannot be the same for an import operation!"
           exit 1
 
       - name: Create Source Config
@@ -85,138 +85,228 @@ jobs:
             "AUTH0_CLIENT_SECRET": "${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', upper(github.event.inputs.sourceEnv))] }}"
           }
           EOF
-        # Ensure you have secrets like AUTH0_DOMAIN_BDBDEV, AUTH0_CLIENT_ID_BDBDEV, etc.
 
-      - name: Create Target Config with Dynamic Keyword Mapping
+      - name: Define Target Env Vars & Create Target Config
         id: create_target_config
         run: |
-          # --- Resource Selection Logic ---
-          ALLOWED_RESOURCES=("actions" "clientGrants" "branding" "clients" "emailTemplates" "organizations" "pages" "prompts" "resourceServers" "roles" "tenant" "triggers")
-          SELECTED_RESOURCES_INPUT="${{ github.event.inputs.include_resources_list }}"
-          FINAL_SELECTED_RESOURCES=()
+          TARGET_ENV_INPUT="${{ github.event.inputs.targetEnv }}"
+          SOURCE_ENV_INPUT="${{ github.event.inputs.sourceEnv }}"
+          echo "Source Environment: $SOURCE_ENV_INPUT"
+          echo "Target Environment: $TARGET_ENV_INPUT"
 
-          if [[ -z "$SELECTED_RESOURCES_INPUT" ]]; then
-            echo "No specific resources listed, defaulting to all allowed resources."
+          # Part 1: Select the appropriate keyword map structure based on the SOURCE environment
+          # The keys in this map structure must match what's in the source tenant's export
+          SELECTED_KEYWORD_MAP_STRUCTURE_JSON=""
+          # IMPORTANT: Ensure these secret names match what you create in GitHub
+          # The secret name should correspond to the source environment type
+          case "$SOURCE_ENV_INPUT" in
+            "bdbdev")
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBDEV }}'
+              ;;
+            "bdbexperimental") # Assuming experimental has same structure as dev for this example
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBEXPERIMENTAL_OR_DEVLIKE }}' # Or specific if different
+              ;;
+            "bdbstage")
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBSTAGE }}'
+              ;;
+            "bdbpreprod")
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBPREPROD }}'
+              ;;
+            "bdbprod") # If bdbprod can be a source
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBPROD }}'
+              ;;
+            *)
+              echo "WARNING: No specific keyword map structure defined for source environment '$SOURCE_ENV_INPUT'. Keyword replacement might not work as expected."
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='{}' # Default to an empty map
+              ;;
+          esac
+
+          if [[ -z "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" || "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" == "null" ]]; then
+            echo "Keyword map structure for source '$SOURCE_ENV_INPUT' is not set or empty. Defaulting to no keyword replacements from map."
+            SELECTED_KEYWORD_MAP_STRUCTURE_JSON='{}'
+          fi
+          echo "Selected Keyword Map Structure (first 100 chars): $(echo "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" | cut -c 1-100)"
+
+
+          # Part 2: Define actual URL/value strings for ##TARGET_...## placeholders based on the TARGET environment
+          # These V_TARGET_... variables will become environment variables like TARGET_DOCGEN_URL
+          # CRITICAL: Fill in ALL V_TARGET_... variables for EACH of your target environments
+          case "$TARGET_ENV_INPUT" in
+            "bdbdev")
+              V_TARGET_DOCGEN_URL="https://dev.documentgenerator.some-site.de/"
+              V_TARGET_USERMGMT_URL="https://dev.usermanagement.some-site.de/"
+              V_TARGET_BE_PORTAL_URL="https://bedev.portal2.some-site.de/"
+              V_TARGET_BE_ELSA_URL="https://bedev.elsa.some-site.de/"
+              V_TARGET_ELSA_URL="https://dev.elsa.some-site.de"
+              V_TARGET_PORTAL_CALLBACK_EDGE_URL="https://dev.portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_PORTAL_LOGIN_URL="https://dev.portal2.some-site.de/api/auth/login"
+              V_TARGET_PORTAL_CALLBACK_URL="https://dev.portal2.some-site.de/api/auth/callback"
+              V_TARGET_PORTAL_LOGO_URL="https://dev.portal2.some-site.de/assets/logo.svg"
+              V_TARGET_PORTAL_BASE_URL_SLASH="https://dev.portal2.some-site.de/"
+              V_TARGET_PORTAL_BASE_URL_NOSLASH="https://dev.portal2.some-site.de"
+              V_TARGET_FE_PORTAL_CALLBACK_EDGE_URL="https://fedev.portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_FE_PORTAL_LOGIN_URL="https://fedev.portal2.some-site.de/api/auth/login"
+              V_TARGET_FE_PORTAL_CALLBACK_URL="https://fedev.portal2.some-site.de/api/auth/callback"
+              V_TARGET_FE_PORTAL_BASE_URL_SLASH="https://fedev.portal2.some-site.de/"
+              V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://fedev.portal2.some-site.de"
+              V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-sitedev.eu.auth0.com/api/v2/"
+              ;;
+            "bdbexperimental")
+              V_TARGET_DOCGEN_URL="https://experimental.documentgenerator.some-site.de/"
+              V_TARGET_USERMGMT_URL="https://experimental.usermanagement.some-site.de/"
+              V_TARGET_BE_PORTAL_URL="https://beexperimental.portal2.some-site.de/"
+              V_TARGET_BE_ELSA_URL="https://beexperimental.elsa.some-site.de/"
+              V_TARGET_ELSA_URL="https://experimental.elsa.some-site.de"
+              V_TARGET_PORTAL_CALLBACK_EDGE_URL="https://experimental.portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_PORTAL_LOGIN_URL="https://experimental.portal2.some-site.de/api/auth/login"
+              V_TARGET_PORTAL_CALLBACK_URL="https://experimental.portal2.some-site.de/api/auth/callback"
+              V_TARGET_PORTAL_LOGO_URL="https://experimental.portal2.some-site.de/assets/logo.svg"
+              V_TARGET_PORTAL_BASE_URL_SLASH="https://experimental.portal2.some-site.de/"
+              V_TARGET_PORTAL_BASE_URL_NOSLASH="https://experimental.portal2.some-site.de"
+              V_TARGET_FE_PORTAL_CALLBACK_EDGE_URL="https://feexperimental.portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_FE_PORTAL_LOGIN_URL="https://feexperimental.portal2.some-site.de/api/auth/login"
+              V_TARGET_FE_PORTAL_CALLBACK_URL="https://feexperimental.portal2.some-site.de/api/auth/callback"
+              V_TARGET_FE_PORTAL_BASE_URL_SLASH="https://feexperimental.portal2.some-site.de/"
+              V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://feexperimental.portal2.some-site.de"
+              V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-siteexperimental.eu.auth0.com/api/v2/"
+              ;;
+            "bdbstage")
+              V_TARGET_DOCGEN_URL="https://stage.documentgenerator.some-site.de/"
+              V_TARGET_USERMGMT_URL="https://stage.usermanagement.some-site.de/"
+              V_TARGET_BE_PORTAL_URL="https://bestage.portal2.some-site.de/"
+              V_TARGET_BE_ELSA_URL="https://bestage.elsa.some-site.de/"
+              V_TARGET_ELSA_URL="https://stage.elsa.some-site.de"
+              V_TARGET_PORTAL_CALLBACK_EDGE_URL="https://stage.portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_PORTAL_LOGIN_URL="https://stage.portal2.some-site.de/api/auth/login"
+              V_TARGET_PORTAL_CALLBACK_URL="https://stage.portal2.some-site.de/api/auth/callback"
+              V_TARGET_PORTAL_LOGO_URL="https://stage.portal2.some-site.de/assets/logo.svg"
+              V_TARGET_PORTAL_BASE_URL_SLASH="https://stage.portal2.some-site.de/"
+              V_TARGET_PORTAL_BASE_URL_NOSLASH="https://stage.portal2.some-site.de"
+              V_TARGET_FE_PORTAL_CALLBACK_EDGE_URL="https://festage.portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_FE_PORTAL_LOGIN_URL="https://festage.portal2.some-site.de/api/auth/login"
+              V_TARGET_FE_PORTAL_CALLBACK_URL="https://festage.portal2.some-site.de/api/auth/callback"
+              V_TARGET_FE_PORTAL_BASE_URL_SLASH="https://festage.portal2.some-site.de/"
+              V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://festage.portal2.some-site.de"
+              V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-sitestage.eu.auth0.com/api/v2/"
+              ;;
+            "bdbpreprod")
+              V_TARGET_DOCGEN_URL="https://preprod.documentgenerator.some-site.de/"
+              V_TARGET_USERMGMT_URL="https://preprod.usermanagement.some-site.de/"
+              V_TARGET_BE_PORTAL_URL="https://bepreprod.portal2.some-site.de/"
+              V_TARGET_BE_ELSA_URL="https://bepreprod.elsa.some-site.de/"
+              V_TARGET_ELSA_URL="https://preprod.elsa.some-site.de"
+              V_TARGET_PORTAL_CALLBACK_EDGE_URL="https://preprod.portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_PORTAL_LOGIN_URL="https://preprod.portal2.some-site.de/api/auth/login"
+              V_TARGET_PORTAL_CALLBACK_URL="https://preprod.portal2.some-site.de/api/auth/callback"
+              V_TARGET_PORTAL_LOGO_URL="https://preprod.portal2.some-site.de/assets/logo.svg"
+              V_TARGET_PORTAL_BASE_URL_SLASH="https://preprod.portal2.some-site.de/"
+              V_TARGET_PORTAL_BASE_URL_NOSLASH="https://preprod.portal2.some-site.de"
+              V_TARGET_FE_PORTAL_CALLBACK_EDGE_URL="https://fepreprod.portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_FE_PORTAL_LOGIN_URL="https://fepreprod.portal2.some-site.de/api/auth/login"
+              V_TARGET_FE_PORTAL_CALLBACK_URL="https://fepreprod.portal2.some-site.de/api/auth/callback"
+              V_TARGET_FE_PORTAL_BASE_URL_SLASH="https://fepreprod.portal2.some-site.de/"
+              V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://fepreprod.portal2.some-site.de"
+              V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-sitepreprod.eu.auth0.com/api/v2/"
+              ;;
+            "bdbprod")
+              V_TARGET_DOCGEN_URL="https://documentgenerator.some-site.de/"
+              V_TARGET_USERMGMT_URL="https://usermanagement.some-site.de/"
+              V_TARGET_BE_PORTAL_URL="https://be.portal2.some-site.de/"
+              V_TARGET_BE_ELSA_URL="https://be.elsa.some-site.de/"
+              V_TARGET_ELSA_URL="https://elsa.some-site.de"
+              V_TARGET_PORTAL_CALLBACK_EDGE_URL="https://portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_PORTAL_LOGIN_URL="https://portal2.some-site.de/api/auth/login"
+              V_TARGET_PORTAL_CALLBACK_URL="https://portal2.some-site.de/api/auth/callback"
+              V_TARGET_PORTAL_LOGO_URL="https://portal2.some-site.de/assets/logo.svg"
+              V_TARGET_PORTAL_BASE_URL_SLASH="https://portal2.some-site.de/"
+              V_TARGET_PORTAL_BASE_URL_NOSLASH="https://portal2.some-site.de"
+              V_TARGET_FE_PORTAL_CALLBACK_EDGE_URL="https://fe.portal2.some-site.de/api/edge-auth/callback"
+              V_TARGET_FE_PORTAL_LOGIN_URL="https://fe.portal2.some-site.de/api/auth/login"
+              V_TARGET_FE_PORTAL_CALLBACK_URL="https://fe.portal2.some-site.de/api/auth/callback"
+              V_TARGET_FE_PORTAL_BASE_URL_SLASH="https://fe.portal2.some-site.de/"
+              V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://fe.portal2.some-site.de"
+              V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-site.eu.auth0.com/api/v2/" # Example, verify your prod Auth0 domain
+              ;;
+            *)
+              echo "ERROR: Unknown targetEnv '$TARGET_ENV_INPUT'. Cannot set environment variables for keyword replacement."
+              exit 1
+              ;;
+          esac
+
+          # Part 3: Export these V_TARGET_... variables as environment variables (TARGET_...)
+          # The names here (e.g., TARGET_DOCGEN_URL) MUST match the ##VAR_NAME## in the map structure secrets
+          echo "TARGET_DOCGEN_URL=$V_TARGET_DOCGEN_URL" >> $GITHUB_ENV
+          echo "TARGET_USERMGMT_URL=$V_TARGET_USERMGMT_URL" >> $GITHUB_ENV
+          echo "TARGET_BE_PORTAL_URL=$V_TARGET_BE_PORTAL_URL" >> $GITHUB_ENV
+          echo "TARGET_BE_ELSA_URL=$V_TARGET_BE_ELSA_URL" >> $GITHUB_ENV
+          echo "TARGET_ELSA_URL=$V_TARGET_ELSA_URL" >> $GITHUB_ENV
+          echo "TARGET_PORTAL_CALLBACK_EDGE_URL=$V_TARGET_PORTAL_CALLBACK_EDGE_URL" >> $GITHUB_ENV
+          echo "TARGET_PORTAL_LOGIN_URL=$V_TARGET_PORTAL_LOGIN_URL" >> $GITHUB_ENV
+          echo "TARGET_PORTAL_CALLBACK_URL=$V_TARGET_PORTAL_CALLBACK_URL" >> $GITHUB_ENV
+          echo "TARGET_PORTAL_LOGO_URL=$V_TARGET_PORTAL_LOGO_URL" >> $GITHUB_ENV
+          echo "TARGET_PORTAL_BASE_URL_SLASH=$V_TARGET_PORTAL_BASE_URL_SLASH" >> $GITHUB_ENV
+          echo "TARGET_PORTAL_BASE_URL_NOSLASH=$V_TARGET_PORTAL_BASE_URL_NOSLASH" >> $GITHUB_ENV
+          echo "TARGET_FE_PORTAL_CALLBACK_EDGE_URL=$V_TARGET_FE_PORTAL_CALLBACK_EDGE_URL" >> $GITHUB_ENV
+          echo "TARGET_FE_PORTAL_LOGIN_URL=$V_TARGET_FE_PORTAL_LOGIN_URL" >> $GITHUB_ENV
+          echo "TARGET_FE_PORTAL_CALLBACK_URL=$V_TARGET_FE_PORTAL_CALLBACK_URL" >> $GITHUB_ENV
+          echo "TARGET_FE_PORTAL_BASE_URL_SLASH=$V_TARGET_FE_PORTAL_BASE_URL_SLASH" >> $GITHUB_ENV
+          echo "TARGET_FE_PORTAL_BASE_URL_NOSLASH=$V_TARGET_FE_PORTAL_BASE_URL_NOSLASH" >> $GITHUB_ENV
+          echo "TARGET_AUTH0_MGMT_API_AUDIENCE=$V_TARGET_AUTH0_MGMT_API_AUDIENCE" >> $GITHUB_ENV
+          echo "Target environment variables for keyword replacement have been set."
+
+          # Part 4: Resource Selection Logic
+          ALLOWED_RESOURCES=("actions" "clientGrants" "branding" "clients" "emailTemplates" "organizations" "pages" "prompts" "resourceServers" "roles" "tenant" "triggers")
+          SELECTED_RESOURCES_INPUT_VAR="${{ github.event.inputs.include_resources_list }}" # Use a different var name to avoid conflict
+          FINAL_SELECTED_RESOURCES=()
+          if [[ -z "$SELECTED_RESOURCES_INPUT_VAR" ]]; then
             FINAL_SELECTED_RESOURCES=("${ALLOWED_RESOURCES[@]}")
-          elif [[ "$(echo "$SELECTED_RESOURCES_INPUT" | tr '[:upper:]' '[:lower:]')" == "none" ]]; then
-            echo "'include_resources_list' is 'NONE', no specific resources will be included."
+          elif [[ "$(echo "$SELECTED_RESOURCES_INPUT_VAR" | tr '[:upper:]' '[:lower:]')" == "none" ]]; then
             FINAL_SELECTED_RESOURCES=()
           else
-            echo "Processing 'include_resources_list': $SELECTED_RESOURCES_INPUT"
-            IFS=',' read -r -a INPUT_ARRAY <<< "$SELECTED_RESOURCES_INPUT"
+            IFS=',' read -r -a INPUT_ARRAY <<< "$SELECTED_RESOURCES_INPUT_VAR"
             for resource_candidate in "${INPUT_ARRAY[@]}"; do
               trimmed_resource=$(echo "$resource_candidate" | xargs)
               is_allowed=false
               for allowed_item in "${ALLOWED_RESOURCES[@]}"; do
-                if [[ "$trimmed_resource" == "$allowed_item" ]]; then
-                  FINAL_SELECTED_RESOURCES+=("$trimmed_resource")
-                  is_allowed=true
-                  break
-                fi
+                if [[ "$trimmed_resource" == "$allowed_item" ]]; then FINAL_SELECTED_RESOURCES+=("$trimmed_resource"); is_allowed=true; break; fi
               done
-              if [[ "$is_allowed" == false && -n "$trimmed_resource" ]]; then
-                echo "WARNING: Resource '$trimmed_resource' from 'include_resources_list' is not allowed and will be ignored."
-              fi
+              if [[ "$is_allowed" == false && -n "$trimmed_resource" ]]; then echo "WARNING: Resource '$trimmed_resource' from 'include_resources_list' is not allowed and will be ignored."; fi
             done
           fi
-
           INCLUDED_ONLY_JSON_PART=""
           if [ ${#FINAL_SELECTED_RESOURCES[@]} -gt 0 ]; then
             RESOURCES_JSON=$(printf '"%s",' "${FINAL_SELECTED_RESOURCES[@]}" | sed 's/,$//')
             INCLUDED_ONLY_JSON_PART=', "AUTH0_INCLUDED_ONLY": ['$RESOURCES_JSON']'
-            echo "AUTH0_INCLUDED_ONLY will be: [${RESOURCES_JSON}]"
+          else INCLUDED_ONLY_JSON_PART=', "AUTH0_INCLUDED_ONLY": []'; fi
+          echo "AUTH0_INCLUDED_ONLY part: $INCLUDED_ONLY_JSON_PART"
+
+
+          # Part 5: Construct the final KEYWORD_MAPPINGS_JSON_PART using the selected map structure
+          KEYWORD_MAPPINGS_JSON_PART_VAR="" # Use a different var name
+          if [[ -n "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" && "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" != "{}" && "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" != "null" ]]; then
+            KEYWORD_MAPPINGS_JSON_PART_VAR=', "AUTH0_KEYWORD_REPLACE_MAPPINGS": '$SELECTED_KEYWORD_MAP_STRUCTURE_JSON
+            echo "AUTH0_KEYWORD_REPLACE_MAPPINGS will use the structure from the secret selected for source $SOURCE_ENV_INPUT."
           else
-            INCLUDED_ONLY_JSON_PART=', "AUTH0_INCLUDED_ONLY": []'
-            echo "AUTH0_INCLUDED_ONLY will be an empty list."
-          fi
-          # --- End of Resource Selection Logic ---
-
-          # --- Dynamic Keyword Map Processing Logic ---
-          TEMPLATE_MAP_JSON='${{ secrets.AUTH0_KEYWORD_CONFIG_MAP_TEMPLATE }}'
-          TARGET_ENV_INPUT="${{ github.event.inputs.targetEnv }}"
-          PROCESSED_MAP_JSON="{}" # Default to an empty JSON object
-
-          if [[ -z "$TEMPLATE_MAP_JSON" || "$TEMPLATE_MAP_JSON" == "null" || "$TEMPLATE_MAP_JSON" == "{}" ]]; then
-            echo "Template keyword map secret (AUTH0_KEYWORD_CONFIG_MAP_TEMPLATE) is empty, not set, or an empty JSON object. No dynamic keyword mappings will be processed."
-            if [[ "$TEMPLATE_MAP_JSON" == "{}" ]]; then PROCESSED_MAP_JSON="{}"; fi
-          else
-            echo "Processing templated keyword map for target environment: $TARGET_ENV_INPUT"
-            
-            # Define replacement strings based on target environment
-            # IMPORTANT: Customize this 'case' statement for YOUR environment names (inputs.targetEnv values)
-            case "$TARGET_ENV_INPUT" in
-              "bdbdev") # Assuming dev is the source, or if migrating dev to another dev-like tenant
-                T_ENV_PREFIX_DOT="dev."
-                T_ENV_STRING_NODOT="dev"
-                ;;
-              "bdbexperimental")
-                T_ENV_PREFIX_DOT="experimental."
-                T_ENV_STRING_NODOT="experimental"
-                ;;
-              "bdbstage") # Example for a 'stage' environment
-                T_ENV_PREFIX_DOT="stage."
-                T_ENV_STRING_NODOT="stage"
-                ;;
-              "bdbpreprod")
-                T_ENV_PREFIX_DOT="preprod."
-                T_ENV_STRING_NODOT="preprod"
-                ;;
-              "bdbprod")
-                T_ENV_PREFIX_DOT=""  # For 'https://dev.foo.com' -> 'https://foo.com'
-                T_ENV_STRING_NODOT=""  # For '...dev...' -> '...' (e.g., 'bedev' -> 'be')
-                ;;
-              *)
-                echo "WARNING: Unknown targetEnv '$TARGET_ENV_INPUT' for keyword map. Placeholders will use 'unknown' values."
-                T_ENV_PREFIX_DOT="unknown-$TARGET_ENV_INPUT." 
-                T_ENV_STRING_NODOT="unknown-$TARGET_ENV_INPUT"
-                ;;
-            esac
-
-            echo "Using jq to process template with: ENV_PREFIX_DOT='$T_ENV_PREFIX_DOT', ENV_STRING_NODOT='$T_ENV_STRING_NODOT'"
-            PROCESSED_MAP_JSON=$(echo "$TEMPLATE_MAP_JSON" | \
-              jq --arg t_env_prefix_dot "$T_ENV_PREFIX_DOT" \
-                 --arg t_env_string_nodot "$T_ENV_STRING_NODOT" \
-                 'walk(if type == "string" then 
-                         gsub("{{ENV_PREFIX_DOT}}"; $t_env_prefix_dot) | 
-                         gsub("{{ENV_STRING_NODOT}}"; $t_env_string_nodot)
-                       else . end)'
-            )
-        
-            if [[ -z "$PROCESSED_MAP_JSON" || "$PROCESSED_MAP_JSON" == "null" ]]; then
-                echo "WARNING: Processed keyword map is empty or null after substitutions by jq. Check template and jq processing."
-                PROCESSED_MAP_JSON="{}"
-            fi
-            echo "Dynamically Processed Keyword Map: $PROCESSED_MAP_JSON"
+            echo "Keyword map structure is empty for source $SOURCE_ENV_INPUT or not set. No keyword mappings will be applied from this map."
+            KEYWORD_MAPPINGS_JSON_PART_VAR=', "AUTH0_KEYWORD_REPLACE_MAPPINGS": {}' # Default to empty map
           fi
 
-          KEYWORD_MAPPINGS_JSON_PART=""
-          if [[ -n "$PROCESSED_MAP_JSON" && "$PROCESSED_MAP_JSON" != "{}" && "$PROCESSED_MAP_JSON" != "null" ]]; then
-            KEYWORD_MAPPINGS_JSON_PART=', "AUTH0_KEYWORD_REPLACE_MAPPINGS": '$PROCESSED_MAP_JSON
-            echo "Keyword mappings will be applied using the dynamically processed map."
-          elif [[ "$PROCESSED_MAP_JSON" == "{}" ]]; then # Handle case where map is intentionally an empty JSON object
-            KEYWORD_MAPPINGS_JSON_PART=', "AUTH0_KEYWORD_REPLACE_MAPPINGS": {}'
-            echo "An empty keyword map {} will be included in the Auth0 config (no keyword replacements from this map)."
-          else
-            echo "No keyword mappings will be applied (processed map is empty or null, and not explicitly an empty JSON object)."
-          fi
-          # --- End of Dynamic Keyword Map Processing Logic ---
-
-          # Create the target-config.json file
+          # Part 6: Create the target-config.json file
           TARGET_CONFIG_FILE="target-config.json"
           cat > $TARGET_CONFIG_FILE << EOF
           {
-            "AUTH0_DOMAIN": "${{ env.TARGET_AUTH0_DOMAIN }}",
-            "AUTH0_CLIENT_ID": "${{ env.TARGET_AUTH0_CLIENT_ID }}",
-            "AUTH0_CLIENT_SECRET": "${{ env.TARGET_AUTH0_CLIENT_SECRET }}",
-            "AUTH0_ALLOW_DELETE": ${{ github.event.inputs.deletionMode == 'allow-deletion-with-confirmation' }}${INCLUDED_ONLY_JSON_PART}${KEYWORD_MAPPINGS_JSON_PART}
+            "AUTH0_DOMAIN": "${{ env.TARGET_AUTH0_DOMAIN_ENVVAR }}",
+            "AUTH0_CLIENT_ID": "${{ env.TARGET_AUTH0_CLIENT_ID_ENVVAR }}",
+            "AUTH0_CLIENT_SECRET": "${{ env.TARGET_AUTH0_CLIENT_SECRET_ENVVAR }}",
+            "AUTH0_ALLOW_DELETE": ${{ github.event.inputs.deletionMode == 'allow-deletion-with-confirmation' }}${INCLUDED_ONLY_JSON_PART}${KEYWORD_MAPPINGS_JSON_PART_VAR}
           }
           EOF
           echo "Generated $TARGET_CONFIG_FILE:"
           cat $TARGET_CONFIG_FILE
-        env:
-          TARGET_AUTH0_DOMAIN: ${{ secrets[format('AUTH0_DOMAIN_{0}', upper(github.event.inputs.targetEnv))] }}
-          TARGET_AUTH0_CLIENT_ID: ${{ secrets[format('AUTH0_CLIENT_ID_{0}', upper(github.event.inputs.targetEnv))] }}
-          TARGET_AUTH0_CLIENT_SECRET: ${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', upper(github.event.inputs.targetEnv))] }}
+        env: # env for the step itself
+          TARGET_AUTH0_DOMAIN_ENVVAR: ${{ secrets[format('AUTH0_DOMAIN_{0}', upper(github.event.inputs.targetEnv))] }}
+          TARGET_AUTH0_CLIENT_ID_ENVVAR: ${{ secrets[format('AUTH0_CLIENT_ID_{0}', upper(github.event.inputs.targetEnv))] }}
+          TARGET_AUTH0_CLIENT_SECRET_ENVVAR: ${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', upper(github.event.inputs.targetEnv))] }}
 
       - name: Export from Source Environment
         run: |
@@ -243,6 +333,9 @@ jobs:
         if: github.event.inputs.operation_mode == 'import_to_target'
         run: |
           echo "Starting import to ${{ github.event.inputs.targetEnv }}..."
+          echo "The following TARGET_ environment variables are available for keyword replacement by a0deploy:"
+          env | grep '^TARGET_' # Print the TARGET_ variables for debugging
+          
           if [ "${{ github.event.inputs.format }}" == "yaml" ]; then
             a0deploy import \
               --config_file=target-config.json \
