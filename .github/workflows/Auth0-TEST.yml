@@ -8,21 +8,21 @@ on:
         required: true
         type: choice
         options:
-          - bdbexperimental
-          - bdbdev
-          - bdbpreprod
-          - bdbstaging
-          - bdbprod
+          - bdb_experimental
+          - bdb_dev
+          - bdb_preprod
+          - bdb_staging
+          - bdb_prod
       targetEnv:
         description: 'Target Tenant'
         required: true
         type: choice
         options:
-          - bdbexperimental
-          - bdbdev
-          - bdbpreprod
-          - bdbstaging
-          - bdbprod
+          - bdb_experimental
+          - bdb_dev
+          - bdb_preprod
+          - bdb_staging
+          - bdb_prod
       format:
         description: 'Export/Import Format'
         required: true
@@ -101,19 +101,19 @@ jobs:
           # The secret name should correspond to the source environment type
           case "$SOURCE_ENV_INPUT" in
             "bdbdev")
-              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBDEV }}'
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_DEV }}'
               ;;
             "bdbexperimental") # Assuming experimental has same structure as dev for this example
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBEXPERIMENTAL_OR_DEVLIKE }}' # Or specific if different
               ;;
             "bdbstage")
-              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBSTAGE }}'
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_STAGE }}'
               ;;
             "bdbpreprod")
-              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBPREPROD }}'
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD }}'
               ;;
             "bdbprod") # If bdbprod can be a source
-              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBPROD }}'
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PROD }}'
               ;;
             *)
               echo "WARNING: No specific keyword map structure defined for source environment '$SOURCE_ENV_INPUT'. Keyword replacement might not work as expected."
