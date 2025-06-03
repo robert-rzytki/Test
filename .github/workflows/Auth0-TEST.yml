@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       sourceEnv:
-        description: 'Source Tenant'
+        description: 'Source Tenant (e.g., bdbdev, bdbstage)'
         required: true
         type: choice
         options:
@@ -14,7 +14,7 @@ on:
           - bdb_staging
           - bdb_prod
       targetEnv:
-        description: 'Target Tenant'
+        description: 'Target Tenant (e.g., bdbpreprod, bdbprod)'
         required: true
         type: choice
         options:
@@ -80,9 +80,9 @@ jobs:
         run: |
           cat > source-config.json << EOF
           {
-            "AUTH0_DOMAIN": "${{ secrets[format('AUTH0_DOMAIN_{0}', upper(github.event.inputs.sourceEnv))] }}",
-            "AUTH0_CLIENT_ID": "${{ secrets[format('AUTH0_CLIENT_ID_{0}', upper(github.event.inputs.sourceEnv))] }}",
-            "AUTH0_CLIENT_SECRET": "${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', upper(github.event.inputs.sourceEnv))] }}"
+            "AUTH0_DOMAIN": "${{ secrets[format('AUTH0_DOMAIN_{0}', github.event.inputs.sourceEnv)] }}",
+            "AUTH0_CLIENT_ID": "${{ secrets[format('AUTH0_CLIENT_ID_{0}', github.event.inputs.sourceEnv)] }}",
+            "AUTH0_CLIENT_SECRET": "${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', github.event.inputs.sourceEnv)] }}"
           }
           EOF
 
@@ -100,19 +100,19 @@ jobs:
           # IMPORTANT: Ensure these secret names match what you create in GitHub
           # The secret name should correspond to the source environment type
           case "$SOURCE_ENV_INPUT" in
-            "bdbdev")
+            "bdb_dev")
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_DEV }}'
               ;;
-            "bdbexperimental") # Assuming experimental has same structure as dev for this example
-              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDBEXPERIMENTAL_OR_DEVLIKE }}' # Or specific if different
+            "bdb_experimental") 
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_EXPERIMENTAL }}' # Or a shared one like AUTH0_KEYWORD_MAP_FROM_DEVLIKE if structure is same as dev
               ;;
-            "bdbstage")
+            "bdb_stage")
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_STAGE }}'
               ;;
-            "bdbpreprod")
-              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD }}'
+            "bdb_preprod")
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD }}' # Or AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD if you changed it
               ;;
-            "bdbprod") # If bdbprod can be a source
+            "bdb_prod") 
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PROD }}'
               ;;
             *)
@@ -225,7 +225,7 @@ jobs:
               V_TARGET_FE_PORTAL_CALLBACK_URL="https://fe.portal2.some-site.de/api/auth/callback"
               V_TARGET_FE_PORTAL_BASE_URL_SLASH="https://fe.portal2.some-site.de/"
               V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://fe.portal2.some-site.de"
-              V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-site.eu.auth0.com/api/v2/" # Example, verify your prod Auth0 domain
+              V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-site.eu.auth0.com/api/v2/" 
               ;;
             *)
               echo "ERROR: Unknown targetEnv '$TARGET_ENV_INPUT'. Cannot set environment variables for keyword replacement."
@@ -234,7 +234,6 @@ jobs:
           esac
 
           # Part 3: Export these V_TARGET_... variables as environment variables (TARGET_...)
-          # The names here (e.g., TARGET_DOCGEN_URL) MUST match the ##VAR_NAME## in the map structure secrets
           echo "TARGET_DOCGEN_URL=$V_TARGET_DOCGEN_URL" >> $GITHUB_ENV
           echo "TARGET_USERMGMT_URL=$V_TARGET_USERMGMT_URL" >> $GITHUB_ENV
           echo "TARGET_BE_PORTAL_URL=$V_TARGET_BE_PORTAL_URL" >> $GITHUB_ENV
@@ -256,7 +255,7 @@ jobs:
 
           # Part 4: Resource Selection Logic
           ALLOWED_RESOURCES=("actions" "clientGrants" "branding" "clients" "emailTemplates" "organizations" "pages" "prompts" "resourceServers" "roles" "tenant" "triggers")
-          SELECTED_RESOURCES_INPUT_VAR="${{ github.event.inputs.include_resources_list }}" # Use a different var name to avoid conflict
+          SELECTED_RESOURCES_INPUT_VAR="${{ github.event.inputs.include_resources_list }}" 
           FINAL_SELECTED_RESOURCES=()
           if [[ -z "$SELECTED_RESOURCES_INPUT_VAR" ]]; then
             FINAL_SELECTED_RESOURCES=("${ALLOWED_RESOURCES[@]}")
@@ -282,13 +281,13 @@ jobs:
 
 
           # Part 5: Construct the final KEYWORD_MAPPINGS_JSON_PART using the selected map structure
-          KEYWORD_MAPPINGS_JSON_PART_VAR="" # Use a different var name
+          KEYWORD_MAPPINGS_JSON_PART_VAR="" 
           if [[ -n "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" && "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" != "{}" && "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" != "null" ]]; then
             KEYWORD_MAPPINGS_JSON_PART_VAR=', "AUTH0_KEYWORD_REPLACE_MAPPINGS": '$SELECTED_KEYWORD_MAP_STRUCTURE_JSON
             echo "AUTH0_KEYWORD_REPLACE_MAPPINGS will use the structure from the secret selected for source $SOURCE_ENV_INPUT."
           else
             echo "Keyword map structure is empty for source $SOURCE_ENV_INPUT or not set. No keyword mappings will be applied from this map."
-            KEYWORD_MAPPINGS_JSON_PART_VAR=', "AUTH0_KEYWORD_REPLACE_MAPPINGS": {}' # Default to empty map
+            KEYWORD_MAPPINGS_JSON_PART_VAR=', "AUTH0_KEYWORD_REPLACE_MAPPINGS": {}' 
           fi
 
           # Part 6: Create the target-config.json file
@@ -303,10 +302,10 @@ jobs:
           EOF
           echo "Generated $TARGET_CONFIG_FILE:"
           cat $TARGET_CONFIG_FILE
-        env: # env for the step itself
-          TARGET_AUTH0_DOMAIN_ENVVAR: ${{ secrets[format('AUTH0_DOMAIN_{0}', upper(github.event.inputs.targetEnv))] }}
-          TARGET_AUTH0_CLIENT_ID_ENVVAR: ${{ secrets[format('AUTH0_CLIENT_ID_{0}', upper(github.event.inputs.targetEnv))] }}
-          TARGET_AUTH0_CLIENT_SECRET_ENVVAR: ${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', upper(github.event.inputs.targetEnv))] }}
+        env: 
+          TARGET_AUTH0_DOMAIN_ENVVAR: ${{ secrets[format('AUTH0_DOMAIN_{0}', github.event.inputs.targetEnv)] }}
+          TARGET_AUTH0_CLIENT_ID_ENVVAR: ${{ secrets[format('AUTH0_CLIENT_ID_{0}', github.event.inputs.targetEnv)] }}
+          TARGET_AUTH0_CLIENT_SECRET_ENVVAR: ${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', github.event.inputs.targetEnv)] }}
 
       - name: Export from Source Environment
         run: |
@@ -334,14 +333,14 @@ jobs:
         run: |
           echo "Starting import to ${{ github.event.inputs.targetEnv }}..."
           echo "The following TARGET_ environment variables are available for keyword replacement by a0deploy:"
-          env | grep '^TARGET_' # Print the TARGET_ variables for debugging
+          env | grep '^TARGET_' 
           
           if [ "${{ github.event.inputs.format }}" == "yaml" ]; then
             a0deploy import \
               --config_file=target-config.json \
               --input_file=auth0-export/tenant.yaml \
               --debug
-          else # format == 'directory'
+          else 
             a0deploy import \
               --config_file=target-config.json \
               --input_file=auth0-export \
