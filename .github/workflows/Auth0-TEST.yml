@@ -8,21 +8,21 @@ on:
         required: true
         type: choice
         options:
-          - bdb_experimental
-          - bdb_dev
-          - bdb_preprod
-          - bdb_staging
-          - bdb_prod
+          - BDB_EXPERIMENTAL
+          - BDB_DEV
+          - BDB_PREPROD
+          - BDB_STAGING
+          - BDB_PROD
       targetEnv:
         description: 'Target Tenant (e.g., bdbpreprod, bdbprod)'
         required: true
         type: choice
         options:
-          - bdb_experimental
-          - bdb_dev
-          - bdb_preprod
-          - bdb_staging
-          - bdb_prod
+          - BDB_EXPERIMENTAL
+          - BDB_DEV
+          - BDB_PREPROD
+          - BDB_STAGING
+          - BDB_PROD
       format:
         description: 'Export/Import Format'
         required: true
@@ -100,19 +100,19 @@ jobs:
           # IMPORTANT: Ensure these secret names match what you create in GitHub
           # The secret name should correspond to the source environment type
           case "$SOURCE_ENV_INPUT" in
-            "bdb_dev")
+            "BDB_DEV")
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_DEV }}'
               ;;
-            "bdb_experimental") 
+            "BDB_EXPERIMENTAL") 
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_EXPERIMENTAL }}' # Or a shared one like AUTH0_KEYWORD_MAP_FROM_DEVLIKE if structure is same as dev
               ;;
             "bdb_stage")
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_STAGE }}'
               ;;
-            "bdb_preprod")
+            "BDB_PREPROD")
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD }}' # Or AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD if you changed it
               ;;
-            "bdb_prod") 
+            "BDB_PROD") 
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PROD }}'
               ;;
             *)
