@@ -1,4 +1,4 @@
-name: Auth0 Environment Migration TEST
+name: Auth0 Migration TEST
 
 on:
   workflow_dispatch:
@@ -280,7 +280,9 @@ jobs:
           # ... (rest of warning)
 
       - name: Import to Target Environment
-        # Placeholder
+        if: github.event.inputs.operation_mode == 'import_to_target'
+        run: |
+          echo "Here should be the import..."
 
       - name: Upload Target Config for Inspection
         if: github.event.inputs.operation_mode == 'prepare_config_for_download'
