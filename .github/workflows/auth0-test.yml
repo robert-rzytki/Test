@@ -165,7 +165,7 @@ jobs:
               # Special case for logo URL if it's consistently pointing to dev in source and should be target-specific
               ("https://dev.portal2.bankenverband.de/assets/logo.svg") : ("https://" + $target_prefix_dot_jq + "portal2.bankenverband.de/assets/logo.svg")
           }
-JQ_PROGRAM_EOF
+          JQ_PROGRAM_EOF
 
           echo "--- Content of temp_jq_program.jq ---"
           cat temp_jq_program.jq
