@@ -121,10 +121,6 @@ jobs:
 
 
           # Part 2: Select Target-Specific URL Definitions JSON
-          # This secret maps ##TARGET_PLACEHOLDER## to actual target URLs
-          TARGET_URLS_SECRET_NAME="AUTH0_TARGET_URLS_FOR_${TARGET_ENV_INPUT}"
-          TARGET_URL_DEFINITIONS_JSON='${{ secrets[TARGET_URLS_SECRET_NAME] }}'
-           # Fallback for older GitHub Actions syntax
           if [[ -z "$TARGET_URL_DEFINITIONS_JSON" ]]; then
              case "$TARGET_ENV_INPUT" in
                 "BDB_DEV") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_DEV }}' ;;
