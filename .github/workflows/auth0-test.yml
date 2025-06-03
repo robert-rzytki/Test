@@ -30,14 +30,12 @@ on:
         default: false
 
 jobs:
-  migrate-auth0-config:
+  prepare-dry-run-config:
     runs-on: ubuntu-latest
-    # Optional: for environment protection rules in GitHub
-    # environment: ${{ github.event.inputs.target_environment }} 
-
     outputs:
       source_env_name: ${{ steps.prepare_env_names.outputs.source_env_name }}
       target_env_name: ${{ steps.prepare_env_names.outputs.target_env_name }}
+      # Pass artifact names to download step if needed, or just use known names.
 
     steps:
       - name: Checkout Repository
@@ -60,7 +58,6 @@ jobs:
           TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
           echo "source_env_name_upper=$(echo "$SOURCE_ENV_NAME" | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
           echo "target_env_name_upper=$(echo "$TARGET_ENV_NAME" | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
-          # Make these available as job outputs if needed by other jobs (optional)
           echo "source_env_name=$SOURCE_ENV_NAME" >> $GITHUB_OUTPUT
           echo "target_env_name=$TARGET_ENV_NAME" >> $GITHUB_OUTPUT
 
@@ -72,6 +69,7 @@ jobs:
 
       - name: Export Configuration from Source Tenant
         run: |
+          # Create a temporary config file for the export operation
           jq \
           --arg domain "$AUTH0_DOMAIN_CURRENT" \
           --arg client_id "$AUTH0_CLIENT_ID_CURRENT" \
@@ -79,24 +77,22 @@ jobs:
           '.AUTH0_DOMAIN = $domain | .AUTH0_CLIENT_ID = $client_id | .AUTH0_CLIENT_SECRET = $client_secret | .AUTH0_ALLOW_DELETE = false' \
           config.json > temp_export_config.json
 
-          echo "Exporting from $AUTH0_DOMAIN_CURRENT using temp_export_config.json"
-          # cat temp_export_config.json # Uncomment for debugging export config
-          
+          echo "Exporting from $AUTH0_DOMAIN_CURRENT..."
+          # Export the Auth0 configuration from the source tenant
           a0deploy export --config_file temp_export_config.json --format yaml --output_folder ./auth0_export_source
         env:
           AUTH0_DOMAIN_CURRENT: ${{ env.AUTH0_DOMAIN_CURRENT }}
           AUTH0_CLIENT_ID_CURRENT: ${{ env.AUTH0_CLIENT_ID_CURRENT }}
           AUTH0_CLIENT_SECRET_CURRENT: ${{ env.AUTH0_CLIENT_SECRET_CURRENT }}
 
-      - name: Archive Exported Configuration (Source Structure)
-        id: archive_source_export
+      - name: Archive Original Exported Configuration
         uses: actions/upload-artifact@v4
         with:
-          name: auth0-exported-from-${{ github.event.inputs.source_environment }}
+          name: original-export-from-${{ github.event.inputs.source_environment }}
           path: ./auth0_export_source
 
-      - name: Set Target Auth0 Credentials and Prepare Import Config (Dry Run Mode)
-        id: prepare_target_config
+      - name: Prepare Import Config File with Keyword Mappings
+        id: prepare_import_config
         run: |
           TARGET_DOMAIN_VALUE="${{ secrets[format('{0}_AUTH0_DOMAIN', env.target_env_name_upper)] }}"
           TARGET_CLIENT_ID_VALUE="${{ secrets[format('{0}_AUTH0_CLIENT_ID', env.target_env_name_upper)] }}"
@@ -104,6 +100,9 @@ jobs:
           SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
           TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
           
+          # Dynamically create the AUTH0_KEYWORD_REPLACE_MAPPINGS object
+          # Add all necessary string replacements here.
+          # Keys are strings from source, values are strings for target.
           jq_script='
           .AUTH0_DOMAIN = $target_domain |
           .AUTH0_CLIENT_ID = $target_client_id |
@@ -118,13 +117,26 @@ jobs:
               ("https://" + $source_env + ".elsa.bankenverband.de") : ("https://" + $target_env + ".elsa.bankenverband.de"),
               
               # Client URLs (callbacks, logout, origins, initiate_login_uri)
+              # Base URLs
               ("https://" + $source_env + ".portal2.bankenverband.de") : ("https://" + $target_env + ".portal2.bankenverband.de"),
+              # Specific callback/logout/origin URLs if their paths also change or if they are different from the base
+              # Example: ("https://" + $source_env + ".portal2.bankenverband.de/specific/logout") : ("https://" + $target_env + ".portal2.bankenverband.de/specific/logout"),
+              # Example from your files (paths are the same, so base URL replacement should cover them):
+              # "https://stage.portal2.bankenverband.de/api/edge-auth/callback"
+              # "https://stage.portal2.bankenverband.de/api/auth/login"
+              # "https://stage.elsa.bankenverband.de" (for callbacks, origins, logout)
 
               # Client Grant Audiences for Management API
               ("https://bdb" + $source_env + ".eu.auth0.com/api/v2/") : ("https://bdb" + $target_env + ".eu.auth0.com/api/v2/"),
 
-              # Tenant settings (picture_url, etc. if they contain env name)
-              # ("https://" + $source_env + ".portal2.bankenverband.de/assets/logo.svg") : ("https://" + $target_env + ".portal2.bankenverband.de/assets/logo.svg")
+              # Tenant settings (e.g., picture_url if it contains env name)
+              # ("https://" + $source_env + ".portal2.bankenverband.de/assets/logo.svg") : ("https://" + $target_env + ".portal2.bankenverband.de/assets/logo.svg"),
+              # From your preprod example: "https://dev.portal2.bankenverband.de/assets/logo.svg" - this suggests it might not always follow source_env.
+              # If URLs are not consistently derivable, they might need to be handled differently or be stable.
+              # For this example, assuming it should be target-specific if it were to change:
+              ("https://dev.portal2.bankenverband.de/assets/logo.svg") : ("https://" + $target_env + ".portal2.bankenverband.de/assets/logo.svg") # Example if 'dev' was a fixed part in source
+
+              # Add any other patterns you identify from comparing your tenant configurations
           }
           '
           jq \
@@ -137,35 +149,77 @@ jobs:
           "$jq_script" \
           config.json > temp_import_config.json
 
-          echo "--- Generated Import Config (temp_import_config.json) ---"
+          echo "--- Generated Import Config (temp_import_config.json) that WOULD BE USED for import ---"
           cat temp_import_config.json
           echo "--- End Generated Import Config ---"
           
-          # This temp_import_config.json would be used by the import command.
-          # We will archive it for inspection.
-
       - name: Archive Generated Import Config File
         uses: actions/upload-artifact@v4
         with:
-          name: auth0-import-config-for-${{ github.event.inputs.target_environment }}
+          name: import-config-for-${{ github.event.inputs.target_environment }}
           path: temp_import_config.json
-      
-      # MODIFIED STEP: Instead of importing, we explain what to check.
-      - name: Test Mode - Import Step Skipped
-        run: |
-          echo "TEST MODE: Import to target tenant SKIPPED."
-          echo "To verify what WOULD BE imported, please do the following:"
-          echo "1. Download the 'auth0-exported-from-${{ github.event.inputs.source_environment }}' artifact."
-          echo "   This contains the raw configuration exported from the source tenant (e.g., tenant.yaml and sub-folders like actions/, pages/). "
-          echo "2. Download the 'auth0-import-config-for-${{ github.event.inputs.target_environment }}' artifact."
-          echo "   This is the 'temp_import_config.json' file that the Auth0 Deploy CLI would use."
-          echo "   It contains the target Auth0 credentials and, crucially, the 'AUTH0_KEYWORD_REPLACE_MAPPINGS'."
-          echo "3. Manually review the mappings in 'temp_import_config.json' against the files in the source export artifact."
-          echo "   For example, if 'temp_import_config.json' has a mapping like:"
-          echo "   '\"https://stage.usermanagement.bankenverband.de/\": \"https://preprod.usermanagement.bankenverband.de/\"'"
-          echo "   You should find 'https://stage.usermanagement.bankenverband.de/' in the source export files (e.g., in resourceServers section of tenant.yaml),"
-          echo "   and understand that during a real import, the Deploy CLI would replace it with 'https://preprod.usermanagement.bankenverband.de/' when sending to the target tenant."
-          echo "This manual comparison simulates the 'dry run' of the keyword replacement."
 
+      - name: Simulate Transformation of tenant.yaml
+        run: |
+          echo "Simulating transformation of tenant.yaml..."
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+
+            const tenantYamlPath = path.join('./auth0_export_source', 'tenant.yaml');
+            const importConfigPath = './temp_import_config.json';
+            const outputTransformedTenantYamlPath = './transformed_tenant_preview.yaml';
+
+            if (!fs.existsSync(tenantYamlPath)) {
+              console.error('Error: Source tenant.yaml not found at: ' + tenantYamlPath);
+              process.exit(1);
+            }
+            if (!fs.existsSync(importConfigPath)) {
+              console.error('Error: Import config (temp_import_config.json) not found.');
+              process.exit(1);
+            }
+
+            const importConfig = JSON.parse(fs.readFileSync(importConfigPath, 'utf8'));
+            const mappings = importConfig.AUTH0_KEYWORD_REPLACE_MAPPINGS || {};
+            
+            let tenantYamlContent = fs.readFileSync(tenantYamlPath, 'utf8');
+            
+            console.log('Applying the following mappings to tenant.yaml:');
+            console.log(JSON.stringify(mappings, null, 2));
+
+            for (const sourceString in mappings) {
+              if (mappings.hasOwnProperty(sourceString)) {
+                const targetString = mappings[sourceString];
+                // Basic global string replacement.
+                // For more complex scenarios (e.g., regex, case sensitivity), this might need adjustment.
+                // RegExp constructor escapes special characters in sourceString for literal matching.
+                tenantYamlContent = tenantYamlContent.split(sourceString).join(targetString);
+              }
+            }
+            
+            fs.writeFileSync(outputTransformedTenantYamlPath, tenantYamlContent, 'utf8');
+            console.log('Transformed tenant.yaml preview saved to: ' + outputTransformedTenantYamlPath);
+          "
+      - name: Archive Transformed tenant.yaml Preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: transformed-tenant-yaml-for-${{ github.event.inputs.target_environment }}
+          path: ./transformed_tenant_preview.yaml
+      
+      - name: Dry Run Instructions
+        run: |
+          echo "DRY RUN COMPLETE. NO ACTUAL IMPORT PERFORMED."
+          echo "Please download the following artifacts from this workflow run:"
+          echo "1. 'original-export-from-${{ github.event.inputs.source_environment }}': Contains the full, unchanged configuration exported from the source tenant."
+          echo "   - Inspect 'tenant.yaml' and files in subdirectories (actions, pages, etc.)."
+          echo "2. 'import-config-for-${{ github.event.inputs.target_environment }}': This is the 'temp_import_config.json' file."
+          echo "   - Review 'AUTH0_KEYWORD_REPLACE_MAPPINGS' to see exactly which strings were intended for replacement."
+          echo "3. 'transformed-tenant-yaml-for-${{ github.event.inputs.target_environment }}': Contains 'transformed_tenant_preview.yaml'."
+          echo "   - This file is a preview of what the main 'tenant.yaml' would look like after applying the keyword mappings."
+          echo ""
+          echo "IMPORTANT LIMITATIONS FOR DRY RUN:"
+          echo "- The transformation preview ('transformed_tenant_preview.yaml') is ONLY for the main 'tenant.yaml' file."
+          echo "- Keyword replacements for auxiliary files (like Action scripts, Page HTML, Branding templates) are NOT simulated in a file."
+          echo "- To understand changes in auxiliary files, you must manually compare the files from the 'original-export-from-${{ github.event.inputs.source_environment }}' artifact against the 'AUTH0_KEYWORD_REPLACE_MAPPINGS' in the 'import-config-for-${{ github.event.inputs.target_environment }}' artifact."
       - name: Test Migration Summary
         run: echo "Test migration dry run from ${{ github.event.inputs.source_environment }} to ${{ github.event.inputs.target_environment }} information prepared."
