@@ -1,0 +1,169 @@
+name: Auth0 Tenant Migration (Test Mode)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_environment:
+        description: 'Source Auth0 Environment (e.g., dev, stage)'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - preprod
+          - prod
+      target_environment:
+        description: 'Target Auth0 Environment (e.g., stage, preprod, prod)'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - preprod
+          - prod
+      allow_delete: # Still relevant for the generated config, even if not importing
+        description: 'Allow deletions in target tenant? (true/false)'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  migrate-auth0-config:
+    runs-on: ubuntu-latest
+    # Optional: for environment protection rules in GitHub
+    # environment: ${{ github.event.inputs.target_environment }} 
+
+    outputs:
+      source_env_name: ${{ steps.prepare_env_names.outputs.source_env_name }}
+      target_env_name: ${{ steps.prepare_env_names.outputs.target_env_name }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18' 
+
+      - name: Install Auth0 Deploy CLI & jq
+        run: |
+          npm install -g auth0-deploy-cli
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Prepare Environment Names
+        id: prepare_env_names
+        run: |
+          SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
+          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
+          echo "source_env_name_upper=$(echo "$SOURCE_ENV_NAME" | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+          echo "target_env_name_upper=$(echo "$TARGET_ENV_NAME" | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+          # Make these available as job outputs if needed by other jobs (optional)
+          echo "source_env_name=$SOURCE_ENV_NAME" >> $GITHUB_OUTPUT
+          echo "target_env_name=$TARGET_ENV_NAME" >> $GITHUB_OUTPUT
+
+      - name: Set Source Auth0 Credentials for Export
+        run: |
+          echo "AUTH0_DOMAIN_CURRENT=${{ secrets[format('{0}_AUTH0_DOMAIN', env.source_env_name_upper)] }}" >> $GITHUB_ENV
+          echo "AUTH0_CLIENT_ID_CURRENT=${{ secrets[format('{0}_AUTH0_CLIENT_ID', env.source_env_name_upper)] }}" >> $GITHUB_ENV
+          echo "AUTH0_CLIENT_SECRET_CURRENT=${{ secrets[format('{0}_AUTH0_CLIENT_SECRET', env.source_env_name_upper)] }}" >> $GITHUB_ENV
+
+      - name: Export Configuration from Source Tenant
+        run: |
+          jq \
+          --arg domain "$AUTH0_DOMAIN_CURRENT" \
+          --arg client_id "$AUTH0_CLIENT_ID_CURRENT" \
+          --arg client_secret "$AUTH0_CLIENT_SECRET_CURRENT" \
+          '.AUTH0_DOMAIN = $domain | .AUTH0_CLIENT_ID = $client_id | .AUTH0_CLIENT_SECRET = $client_secret | .AUTH0_ALLOW_DELETE = false' \
+          config.json > temp_export_config.json
+
+          echo "Exporting from $AUTH0_DOMAIN_CURRENT using temp_export_config.json"
+          # cat temp_export_config.json # Uncomment for debugging export config
+          
+          a0deploy export --config_file temp_export_config.json --format yaml --output_folder ./auth0_export_source
+        env:
+          AUTH0_DOMAIN_CURRENT: ${{ env.AUTH0_DOMAIN_CURRENT }}
+          AUTH0_CLIENT_ID_CURRENT: ${{ env.AUTH0_CLIENT_ID_CURRENT }}
+          AUTH0_CLIENT_SECRET_CURRENT: ${{ env.AUTH0_CLIENT_SECRET_CURRENT }}
+
+      - name: Archive Exported Configuration (Source Structure)
+        id: archive_source_export
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth0-exported-from-${{ github.event.inputs.source_environment }}
+          path: ./auth0_export_source
+
+      - name: Set Target Auth0 Credentials and Prepare Import Config (Dry Run Mode)
+        id: prepare_target_config
+        run: |
+          TARGET_DOMAIN_VALUE="${{ secrets[format('{0}_AUTH0_DOMAIN', env.target_env_name_upper)] }}"
+          TARGET_CLIENT_ID_VALUE="${{ secrets[format('{0}_AUTH0_CLIENT_ID', env.target_env_name_upper)] }}"
+          TARGET_CLIENT_SECRET_VALUE="${{ secrets[format('{0}_AUTH0_CLIENT_SECRET', env.target_env_name_upper)] }}"
+          SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
+          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
+          
+          jq_script='
+          .AUTH0_DOMAIN = $target_domain |
+          .AUTH0_CLIENT_ID = $target_client_id |
+          .AUTH0_CLIENT_SECRET = $target_client_secret |
+          .AUTH0_ALLOW_DELETE = $allow_delete |
+          .AUTH0_KEYWORD_REPLACE_MAPPINGS = {
+              # Resource Server Identifiers (URLs)
+              ("https://" + $source_env + ".documentgenerator.bankenverband.de/") : ("https://" + $target_env + ".documentgenerator.bankenverband.de/"),
+              ("https://" + $source_env + ".usermanagement.bankenverband.de/") : ("https://" + $target_env + ".usermanagement.bankenverband.de/"),
+              ("https://be" + $source_env + ".portal2.bankenverband.de/") : ("https://be" + $target_env + ".portal2.bankenverband.de/"),
+              ("https://be" + $source_env + ".elsa.bankenverband.de/") : ("https://be" + $target_env + ".elsa.bankenverband.de/"),
+              ("https://" + $source_env + ".elsa.bankenverband.de") : ("https://" + $target_env + ".elsa.bankenverband.de"),
+              
+              # Client URLs (callbacks, logout, origins, initiate_login_uri)
+              ("https://" + $source_env + ".portal2.bankenverband.de") : ("https://" + $target_env + ".portal2.bankenverband.de"),
+
+              # Client Grant Audiences for Management API
+              ("https://bdb" + $source_env + ".eu.auth0.com/api/v2/") : ("https://bdb" + $target_env + ".eu.auth0.com/api/v2/"),
+
+              # Tenant settings (picture_url, etc. if they contain env name)
+              # ("https://" + $source_env + ".portal2.bankenverband.de/assets/logo.svg") : ("https://" + $target_env + ".portal2.bankenverband.de/assets/logo.svg")
+          }
+          '
+          jq \
+          --arg target_domain "$TARGET_DOMAIN_VALUE" \
+          --arg target_client_id "$TARGET_CLIENT_ID_VALUE" \
+          --arg target_client_secret "$TARGET_CLIENT_SECRET_VALUE" \
+          --argjson allow_delete ${{ github.event.inputs.allow_delete }} \
+          --arg source_env "$SOURCE_ENV_NAME" \
+          --arg target_env "$TARGET_ENV_NAME" \
+          "$jq_script" \
+          config.json > temp_import_config.json
+
+          echo "--- Generated Import Config (temp_import_config.json) ---"
+          cat temp_import_config.json
+          echo "--- End Generated Import Config ---"
+          
+          # This temp_import_config.json would be used by the import command.
+          # We will archive it for inspection.
+
+      - name: Archive Generated Import Config File
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth0-import-config-for-${{ github.event.inputs.target_environment }}
+          path: temp_import_config.json
+      
+      # MODIFIED STEP: Instead of importing, we explain what to check.
+      - name: Test Mode - Import Step Skipped
+        run: |
+          echo "TEST MODE: Import to target tenant SKIPPED."
+          echo "To verify what WOULD BE imported, please do the following:"
+          echo "1. Download the 'auth0-exported-from-${{ github.event.inputs.source_environment }}' artifact."
+          echo "   This contains the raw configuration exported from the source tenant (e.g., tenant.yaml and sub-folders like actions/, pages/). "
+          echo "2. Download the 'auth0-import-config-for-${{ github.event.inputs.target_environment }}' artifact."
+          echo "   This is the 'temp_import_config.json' file that the Auth0 Deploy CLI would use."
+          echo "   It contains the target Auth0 credentials and, crucially, the 'AUTH0_KEYWORD_REPLACE_MAPPINGS'."
+          echo "3. Manually review the mappings in 'temp_import_config.json' against the files in the source export artifact."
+          echo "   For example, if 'temp_import_config.json' has a mapping like:"
+          echo "   '\"https://stage.usermanagement.bankenverband.de/\": \"https://preprod.usermanagement.bankenverband.de/\"'"
+          echo "   You should find 'https://stage.usermanagement.bankenverband.de/' in the source export files (e.g., in resourceServers section of tenant.yaml),"
+          echo "   and understand that during a real import, the Deploy CLI would replace it with 'https://preprod.usermanagement.bankenverband.de/' when sending to the target tenant."
+          echo "This manual comparison simulates the 'dry run' of the keyword replacement."
+
+      - name: Test Migration Summary
+        run: echo "Test migration dry run from ${{ github.event.inputs.source_environment }} to ${{ github.event.inputs.target_environment }} information prepared."
