@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_environment:
-        description: 'Source Auth0 Environment (e.g., dev, stage)'
+        description: 'Source Tenant'
         required: true
         type: choice
         options:
@@ -12,8 +12,9 @@ on:
           - stage
           - preprod
           - prod
+        default: stage
       target_environment:
-        description: 'Target Auth0 Environment (e.g., stage, preprod, prod)'
+        description: 'Target Tenant'
         required: true
         type: choice
         options:
@@ -21,6 +22,7 @@ on:
           - stage
           - preprod
           - prod
+        default: preprod
       allow_delete: # Still relevant for the generated config, even if not importing
         description: 'Allow deletions in target tenant? (true/false)'
         required: true
