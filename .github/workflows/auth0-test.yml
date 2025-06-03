@@ -1,10 +1,10 @@
-name: Auth0 Tenant Migration (Test Mode)
+name: Auth0 Tenant Migration (Dry Run - Generates Transformed tenant.yaml)
 
 on:
   workflow_dispatch:
     inputs:
       source_environment:
-        description: 'Source Tenant'
+        description: 'Source Auth0 Environment (e.g., dev, stage, preprod)'
         required: true
         type: choice
         options:
@@ -14,7 +14,7 @@ on:
           - prod
         default: stage
       target_environment:
-        description: 'Target Tenant'
+        description: 'Target Auth0 Environment (e.g., dev, stage, preprod, prod)'
         required: true
         type: choice
         options:
@@ -23,8 +23,8 @@ on:
           - preprod
           - prod
         default: preprod
-      allow_delete: # Still relevant for the generated config, even if not importing
-        description: 'Allow deletions in target tenant? (true/false)'
+      allow_delete: 
+        description: 'Allow deletions in target tenant? (true/false) - For config generation'
         required: true
         type: boolean
         default: false
@@ -35,7 +35,6 @@ jobs:
     outputs:
       source_env_name: ${{ steps.prepare_env_names.outputs.source_env_name }}
       target_env_name: ${{ steps.prepare_env_names.outputs.target_env_name }}
-      # Pass artifact names to download step if needed, or just use known names.
 
     steps:
       - name: Checkout Repository
@@ -69,7 +68,16 @@ jobs:
 
       - name: Export Configuration from Source Tenant
         run: |
-          # Create a temporary config file for the export operation
+          # Validate config.json before using it for export config generation
+          echo "Validating repository config.json..."
+          if jq empty config.json > /dev/null 2>&1; then
+            echo "Repository config.json is valid JSON."
+          else
+            echo "Error: Repository config.json is NOT valid JSON. Please check its content."
+            cat config.json # Print content for debugging
+            exit 1
+          fi
+
           jq \
           --arg domain "$AUTH0_DOMAIN_CURRENT" \
           --arg client_id "$AUTH0_CLIENT_ID_CURRENT" \
@@ -78,7 +86,6 @@ jobs:
           config.json > temp_export_config.json
 
           echo "Exporting from $AUTH0_DOMAIN_CURRENT..."
-          # Export the Auth0 configuration from the source tenant
           a0deploy export --config_file temp_export_config.json --format yaml --output_folder ./auth0_export_source
         env:
           AUTH0_DOMAIN_CURRENT: ${{ env.AUTH0_DOMAIN_CURRENT }}
@@ -91,67 +98,109 @@ jobs:
           name: original-export-from-${{ github.event.inputs.source_environment }}
           path: ./auth0_export_source
 
-      - name: Prepare Import Config File with Keyword Mappings
+      - name: Prepare Import Config File with Conditional Keyword Mappings
         id: prepare_import_config
         run: |
+          set -e # Exit immediately if a command exits with a non-zero status.
+          set -x # Print commands and their arguments as they are executed.
+
+          echo "Validating repository config.json before use..."
+          if jq empty config.json > /dev/null 2>&1; then
+            echo "Repository config.json is valid JSON."
+          else
+            echo "Error: Repository config.json is NOT valid JSON. Please check its content."
+            echo "--- Content of config.json ---"
+            cat config.json
+            echo "-----------------------------"
+            exit 1
+          fi
+          echo "--- Content of config.json being used by jq ---"
+          cat config.json
+          echo "----------------------------------------------"
+
+
           TARGET_DOMAIN_VALUE="${{ secrets[format('{0}_AUTH0_DOMAIN', env.target_env_name_upper)] }}"
           TARGET_CLIENT_ID_VALUE="${{ secrets[format('{0}_AUTH0_CLIENT_ID', env.target_env_name_upper)] }}"
           TARGET_CLIENT_SECRET_VALUE="${{ secrets[format('{0}_AUTH0_CLIENT_SECRET', env.target_env_name_upper)] }}"
           SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
           TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
+
+          SOURCE_PREFIX_DOT="$SOURCE_ENV_NAME."
+          SOURCE_PREFIX_BE="be$SOURCE_ENV_NAME."
           
-          # Dynamically create the AUTH0_KEYWORD_REPLACE_MAPPINGS object
-          # Add all necessary string replacements here.
-          # Keys are strings from source, values are strings for target.
-          jq_script='
-          .AUTH0_DOMAIN = $target_domain |
-          .AUTH0_CLIENT_ID = $target_client_id |
-          .AUTH0_CLIENT_SECRET = $target_client_secret |
-          .AUTH0_ALLOW_DELETE = $allow_delete |
+          if [ "$TARGET_ENV_NAME" = "prod" ]; then
+            TARGET_PREFIX_DOT="" 
+            TARGET_PREFIX_BE="be." 
+            TARGET_AUTH0_API_ENV_PART="prod" 
+          else
+            TARGET_PREFIX_DOT="$TARGET_ENV_NAME."
+            TARGET_PREFIX_BE="be$TARGET_ENV_NAME."
+            TARGET_AUTH0_API_ENV_PART="$TARGET_ENV_NAME" 
+          fi
+
+          SOURCE_AUTH0_API_ENV_PART="$SOURCE_ENV_NAME"
+          if [ "$SOURCE_ENV_NAME" = "stage" ]; then
+            SOURCE_AUTH0_API_ENV_PART="staging" 
+          fi
+          
+          cat <<'JQ_PROGRAM_EOF' > temp_jq_program.jq
+          .AUTH0_DOMAIN = $target_domain_jq |
+          .AUTH0_CLIENT_ID = $target_client_id_jq |
+          .AUTH0_CLIENT_SECRET = $target_client_secret_jq |
+          .AUTH0_ALLOW_DELETE = $allow_delete_jq |
           .AUTH0_KEYWORD_REPLACE_MAPPINGS = {
-              # Resource Server Identifiers (URLs)
-              ("https://" + $source_env + ".documentgenerator.bankenverband.de/") : ("https://" + $target_env + ".documentgenerator.bankenverband.de/"),
-              ("https://" + $source_env + ".usermanagement.bankenverband.de/") : ("https://" + $target_env + ".usermanagement.bankenverband.de/"),
-              ("https://be" + $source_env + ".portal2.bankenverband.de/") : ("https://be" + $target_env + ".portal2.bankenverband.de/"),
-              ("https://be" + $source_env + ".elsa.bankenverband.de/") : ("https://be" + $target_env + ".elsa.bankenverband.de/"),
-              ("https://" + $source_env + ".elsa.bankenverband.de") : ("https://" + $target_env + ".elsa.bankenverband.de"),
+              # Resource Server Identifiers & Client URLs (generic pattern)
+              ("https://" + $source_prefix_dot_jq + "documentgenerator.bankenverband.de/") : ("https://" + $target_prefix_dot_jq + "documentgenerator.bankenverband.de/"),
+              ("https://" + $source_prefix_dot_jq + "usermanagement.bankenverband.de/") : ("https://" + $target_prefix_dot_jq + "usermanagement.bankenverband.de/"),
+              ("https://" + $source_prefix_be_jq + "portal2.bankenverband.de/") : ("https://" + $target_prefix_be_jq + "portal2.bankenverband.de/"),
+              ("https://" + $source_prefix_be_jq + "elsa.bankenverband.de/") : ("https://" + $target_prefix_be_jq + "elsa.bankenverband.de/"),
+              ("https://" + $source_prefix_dot_jq + "elsa.bankenverband.de") : ("https://" + $target_prefix_dot_jq + "elsa.bankenverband.de"), 
               
-              # Client URLs (callbacks, logout, origins, initiate_login_uri)
-              # Base URLs
-              ("https://" + $source_env + ".portal2.bankenverband.de") : ("https://" + $target_env + ".portal2.bankenverband.de"),
-              # Specific callback/logout/origin URLs if their paths also change or if they are different from the base
-              # Example: ("https://" + $source_env + ".portal2.bankenverband.de/specific/logout") : ("https://" + $target_env + ".portal2.bankenverband.de/specific/logout"),
-              # Example from your files (paths are the same, so base URL replacement should cover them):
-              # "https://stage.portal2.bankenverband.de/api/edge-auth/callback"
-              # "https://stage.portal2.bankenverband.de/api/auth/login"
-              # "https://stage.elsa.bankenverband.de" (for callbacks, origins, logout)
+              # Client URLs base (paths are usually the same)
+              ("https://" + $source_prefix_dot_jq + "portal2.bankenverband.de") : ("https://" + $target_prefix_dot_jq + "portal2.bankenverband.de"),
+              
+              # Auth0 Management API Audience
+              ("https://bdb" + $source_auth0_api_env_part_jq + ".eu.auth0.com/api/v2/") : ("https://bdb" + $target_auth0_api_env_part_jq + ".eu.auth0.com/api/v2/"),
 
-              # Client Grant Audiences for Management API
-              ("https://bdb" + $source_env + ".eu.auth0.com/api/v2/") : ("https://bdb" + $target_env + ".eu.auth0.com/api/v2/"),
-
-              # Tenant settings (e.g., picture_url if it contains env name)
-              # ("https://" + $source_env + ".portal2.bankenverband.de/assets/logo.svg") : ("https://" + $target_env + ".portal2.bankenverband.de/assets/logo.svg"),
-              # From your preprod example: "https://dev.portal2.bankenverband.de/assets/logo.svg" - this suggests it might not always follow source_env.
-              # If URLs are not consistently derivable, they might need to be handled differently or be stable.
-              # For this example, assuming it should be target-specific if it were to change:
-              ("https://dev.portal2.bankenverband.de/assets/logo.svg") : ("https://" + $target_env + ".portal2.bankenverband.de/assets/logo.svg") # Example if 'dev' was a fixed part in source
-
-              # Add any other patterns you identify from comparing your tenant configurations
+              # Special case for logo URL if it's consistently pointing to dev in source and should be target-specific
+              ("https://dev.portal2.bankenverband.de/assets/logo.svg") : ("https://" + $target_prefix_dot_jq + "portal2.bankenverband.de/assets/logo.svg")
           }
-          '
-          jq \
-          --arg target_domain "$TARGET_DOMAIN_VALUE" \
-          --arg target_client_id "$TARGET_CLIENT_ID_VALUE" \
-          --arg target_client_secret "$TARGET_CLIENT_SECRET_VALUE" \
-          --argjson allow_delete ${{ github.event.inputs.allow_delete }} \
-          --arg source_env "$SOURCE_ENV_NAME" \
-          --arg target_env "$TARGET_ENV_NAME" \
-          "$jq_script" \
-          config.json > temp_import_config.json
+JQ_PROGRAM_EOF
 
-          echo "--- Generated Import Config (temp_import_config.json) that WOULD BE USED for import ---"
+          echo "--- Content of temp_jq_program.jq ---"
+          cat temp_jq_program.jq
+          echo "------------------------------------"
+
+          echo "Executing jq command..."
+          jq \
+            --arg target_domain_jq "$TARGET_DOMAIN_VALUE" \
+            --arg target_client_id_jq "$TARGET_CLIENT_ID_VALUE" \
+            --arg target_client_secret_jq "$TARGET_CLIENT_SECRET_VALUE" \
+            --argjson allow_delete_jq ${{ github.event.inputs.allow_delete }} \
+            --arg source_env_name_jq "$SOURCE_ENV_NAME" \
+            --arg target_env_name_jq "$TARGET_ENV_NAME" \
+            --arg source_prefix_dot_jq "$SOURCE_PREFIX_DOT" \
+            --arg source_prefix_be_jq "$SOURCE_PREFIX_BE" \
+            --arg target_prefix_dot_jq "$TARGET_PREFIX_DOT" \
+            --arg target_prefix_be_jq "$TARGET_PREFIX_BE" \
+            --arg source_auth0_api_env_part_jq "$SOURCE_AUTH0_API_ENV_PART" \
+            --arg target_auth0_api_env_part_jq "$TARGET_AUTH0_API_ENV_PART" \
+            -f temp_jq_program.jq \
+            config.json > temp_import_config.json
+          
+          JQ_EXIT_CODE=$?
+          echo "jq command finished with exit code: $JQ_EXIT_CODE"
+          if [ $JQ_EXIT_CODE -ne 0 ]; then
+            echo "Error: jq command failed."
+            exit $JQ_EXIT_CODE
+          fi
+
+          rm temp_jq_program.jq 
+
+          echo "--- Generated Import Config (temp_import_config.json) ---"
           cat temp_import_config.json
           echo "--- End Generated Import Config ---"
+          set +x # Turn off command printing
           
       - name: Archive Generated Import Config File
         uses: actions/upload-artifact@v4
@@ -179,21 +228,20 @@ jobs:
               process.exit(1);
             }
 
+            let tenantYamlContent = fs.readFileSync(tenantYamlPath, 'utf8');
             const importConfig = JSON.parse(fs.readFileSync(importConfigPath, 'utf8'));
             const mappings = importConfig.AUTH0_KEYWORD_REPLACE_MAPPINGS || {};
-            
-            let tenantYamlContent = fs.readFileSync(tenantYamlPath, 'utf8');
             
             console.log('Applying the following mappings to tenant.yaml:');
             console.log(JSON.stringify(mappings, null, 2));
 
-            for (const sourceString in mappings) {
+            const sortedMappingKeys = Object.keys(mappings).sort((a, b) => b.length - a.length);
+
+            for (const sourceString of sortedMappingKeys) {
               if (mappings.hasOwnProperty(sourceString)) {
                 const targetString = mappings[sourceString];
-                // Basic global string replacement.
-                // For more complex scenarios (e.g., regex, case sensitivity), this might need adjustment.
-                // RegExp constructor escapes special characters in sourceString for literal matching.
-                tenantYamlContent = tenantYamlContent.split(sourceString).join(targetString);
+                const regex = new RegExp(sourceString.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&'), 'g');
+                tenantYamlContent = tenantYamlContent.replace(regex, targetString);
               }
             }
             
@@ -211,15 +259,8 @@ jobs:
           echo "DRY RUN COMPLETE. NO ACTUAL IMPORT PERFORMED."
           echo "Please download the following artifacts from this workflow run:"
           echo "1. 'original-export-from-${{ github.event.inputs.source_environment }}': Contains the full, unchanged configuration exported from the source tenant."
-          echo "   - Inspect 'tenant.yaml' and files in subdirectories (actions, pages, etc.)."
-          echo "2. 'import-config-for-${{ github.event.inputs.target_environment }}': This is the 'temp_import_config.json' file."
-          echo "   - Review 'AUTH0_KEYWORD_REPLACE_MAPPINGS' to see exactly which strings were intended for replacement."
-          echo "3. 'transformed-tenant-yaml-for-${{ github.event.inputs.target_environment }}': Contains 'transformed_tenant_preview.yaml'."
-          echo "   - This file is a preview of what the main 'tenant.yaml' would look like after applying the keyword mappings."
+          echo "2. 'import-config-for-${{ github.event.inputs.target_environment }}': This is the 'temp_import_config.json' file with keyword mappings."
+          echo "3. 'transformed-tenant-yaml-for-${{ github.event.inputs.target_environment }}': Contains 'transformed_tenant_preview.yaml', a preview of the main tenant file."
           echo ""
-          echo "IMPORTANT LIMITATIONS FOR DRY RUN:"
-          echo "- The transformation preview ('transformed_tenant_preview.yaml') is ONLY for the main 'tenant.yaml' file."
-          echo "- Keyword replacements for auxiliary files (like Action scripts, Page HTML, Branding templates) are NOT simulated in a file."
-          echo "- To understand changes in auxiliary files, you must manually compare the files from the 'original-export-from-${{ github.event.inputs.source_environment }}' artifact against the 'AUTH0_KEYWORD_REPLACE_MAPPINGS' in the 'import-config-for-${{ github.event.inputs.target_environment }}' artifact."
-      - name: Test Migration Summary
-        run: echo "Test migration dry run from ${{ github.event.inputs.source_environment }} to ${{ github.event.inputs.target_environment }} information prepared."
+          echo "IMPORTANT: Review 'transformed_tenant_preview.yaml' carefully. Also, manually compare files in 'original-export-from-${{ github.event.inputs.source_environment }}' (like action scripts, page HTML) against the mappings in 'import-config-for-${{ github.event.inputs.target_environment }}' as their content is NOT transformed in this dry run preview file."
+
