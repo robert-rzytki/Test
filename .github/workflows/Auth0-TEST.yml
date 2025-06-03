@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       sourceEnv:
-        description: 'Source Tenant (e.g., bdbdev, bdbstage)'
+        description: 'Source Tenant (e.g., bdbdev, bdbstage))'
         required: true
         type: choice
         options:
