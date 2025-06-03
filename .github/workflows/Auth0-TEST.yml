@@ -227,42 +227,46 @@ jobs:
         if: github.event.inputs.operation_mode == 'preview_resolved_keyword_map'
         run: |
           echo "Generating preview of resolved keyword replacements..."
-          SOURCE_MAP_JSON='${{ steps.prepare_config.outputs.SELECTED_KEYWORD_MAP_STRUCTURE_JSON_CONTENT }}'
-          TARGET_URLS_JSON='${{ steps.prepare_config.outputs.TARGET_URL_DEFINITIONS_JSON_CONTENT }}'
-          
-          if [[ -z "$SOURCE_MAP_JSON" || "$SOURCE_MAP_JSON" == "{}" || -z "$TARGET_URLS_JSON" || "$TARGET_URLS_JSON" == "{}" ]]; then
-            echo "Cannot generate preview: Source map or target URL definitions are empty."
+          # Retrieve the multi-line JSON content from the previous step's output
+          # The quotes are important to preserve multi-line content
+          SOURCE_MAP_JSON_CONTENT="${{ steps.prepare_config.outputs.SELECTED_KEYWORD_MAP_STRUCTURE_JSON_CONTENT }}"
+          TARGET_URLS_JSON_CONTENT="${{ steps.prepare_config.outputs.TARGET_URL_DEFINITIONS_JSON_CONTENT }}"
+
+          # Check if JSONs are effectively empty (null, empty string, or empty object {}) using jq
+          is_source_map_empty=$(echo "$SOURCE_MAP_JSON_CONTENT" | jq 'if . == null or . == "" or . == {} then "empty" else "notempty" end' -r)
+          is_target_urls_empty=$(echo "$TARGET_URLS_JSON_CONTENT" | jq 'if . == null or . == "" or . == {} then "empty" else "notempty" end' -r)
+
+          if [[ "$is_source_map_empty" == "empty" || "$is_target_urls_empty" == "empty" ]]; then
+            echo "Cannot generate preview: Source map structure or target URL definitions are effectively empty."
+            echo "Source Map Content (first 100 chars): $(echo "$SOURCE_MAP_JSON_CONTENT" | head -c 100)"
+            echo "Target URLs Content (first 100 chars): $(echo "$TARGET_URLS_JSON_CONTENT" | head -c 100)"
             exit 0 # Exit gracefully, not an error for preview if maps are empty
           fi
 
           echo "---------------------------------------------------------------------"
           echo "PREVIEW: The following replacements would be attempted by a0deploy:"
+          echo " (based on selected source map and target URL definitions)"
           echo "---------------------------------------------------------------------"
           
           # Use jq to iterate through the source map and resolve placeholders using the target URLs
-          echo "$SOURCE_MAP_JSON" | jq -r 'to_entries[] | "\(.key) /// \(.value)"' | while IFS=' /// ' read -r source_url placeholder_value; do
-            if [[ "$placeholder_value" == ##*## ]]; then
-              # Extract placeholder name, e.g., from "##TARGET_DOCGEN_URL##" to "TARGET_DOCGEN_URL"
-              placeholder_name=$(echo "$placeholder_value" | sed 's/^##//;s/##$//')
-              # Look up this placeholder name in the target URLs JSON
-              actual_target_url=$(echo "$TARGET_URLS_JSON" | jq -r --arg ph_name "$placeholder_name" '.[$ph_name]')
-              
-              if [[ -n "$actual_target_url" && "$actual_target_url" != "null" ]]; then
-                echo "Replace SOURCE: \"$source_url\""
-                echo "   with TARGET: \"$actual_target_url\""
-                echo ""
+          # Pass the entire TARGET_URLS_JSON_CONTENT as an argument to the inner jq
+          echo "$SOURCE_MAP_JSON_CONTENT" | jq -r --argjson targetUrls "$TARGET_URLS_JSON_CONTENT" '
+            to_entries[] | 
+            "Source URL to find: \"\(.key)\"\nPlaceholder in map: \"\(.value)\"\n\(
+              if (.value | startswith("##") and endswith("##")) then
+                (.value | ltrimstr("##") | rtrimstr("##")) as $placeholder_name |
+                if $targetUrls[$placeholder_name] != null then
+                  "  ↳ Resolves to (Target URL): \"\($targetUrls[$placeholder_name])\""
+                else
+                  "  ↳ WARNING: Placeholder \"\(.value)\" NOT FOUND in target URL definitions!"
+                end
               else
-                echo "WARNING: Placeholder \"$placeholder_value\" for source \"$source_url\" could not be resolved in target URL definitions."
-              fi
-            else
-              # This case should ideally not happen if source maps always use placeholders
-              echo "INFO: Source \"$source_url\" is mapped to a non-placeholder value \"$placeholder_value\"."
-            fi
-          done
+                "  ↳ INFO: Value is not a ##PLACEHOLDER##, will be used as is: \"\(.value)\""
+              end
+            )\n"
+          '
           echo "---------------------------------------------------------------------"
-          echo "Preview finished. If running actual import, a0deploy will use environment variables for these."
-          # For a more advanced preview, you would apply these replacements to a copy of auth0-export/tenant.yaml
-          # For now, this shows the mapping.
+          echo "Preview finished. If running actual import, a0deploy will use environment variables set from the target URL definitions for these replacements."
         
       - name: Warning for Deletion Mode
         if: github.event.inputs.deletionMode == 'allow-deletion-with-confirmation' && github.event.inputs.operation_mode == 'import_to_target'
