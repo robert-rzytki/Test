@@ -1,19 +1,18 @@
-name: Auth0 Migration TEST
+name: Auth0 Environment Migration TEST
 
 on:
   workflow_dispatch:
     inputs:
       sourceEnv:
-        description: 'Source Tenant (e.g., BDB_DEV, BDB_STAGING)'
+        description: 'Source Tenant (e.g., BDB_DEV, BDB_STAGE)'
         required: true
         type: choice
-        options: # Ensure these match your secret naming convention (e.g., BDB_DEV)
+        options: 
           - BDB_EXPERIMENTAL
           - BDB_DEV
           - BDB_PREPROD
           - BDB_STAGING
           - BDB_PROD
-        default: 'BDB_STAGING'
       targetEnv:
         description: 'Target Tenant (e.g., BDB_PREPROD, BDB_PROD)'
         required: true
@@ -24,7 +23,6 @@ on:
           - BDB_PREPROD
           - BDB_STAGING
           - BDB_PROD
-        default: 'BDB_PREPROD'
       format:
         description: 'Export/Import Format'
         required: true
@@ -54,7 +52,7 @@ on:
           - import_to_target
           - prepare_config_for_download
           - preview_resolved_keyword_map 
-        default: 'preview_resolved_keyword_map'
+        default: 'prepare_config_for_download'
 
 jobs:
   migrate:
@@ -100,56 +98,51 @@ jobs:
           echo "Target Environment: $TARGET_ENV_INPUT"
 
           # Part 1: Select the Source-Specific Keyword Map Structure JSON
-          if [[ -z "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" ]]; then
-             case "$SOURCE_ENV_INPUT" in
-                "BDB_DEV") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_DEV }}' ;;
-                "BDB_EXPERIMENTAL") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_EXPERIMENTAL }}' ;;
-                "BDB_STAGING") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_STAGING }}' ;;
-                "BDB_PREPROD") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD }}' ;; # Or BDB_PREPROD if you changed it
-                "BDB_PROD") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PROD }}' ;;
-                *) echo "WARNING: No specific keyword map structure secret logic for source '$SOURCE_ENV_INPUT'."; SELECTED_KEYWORD_MAP_STRUCTURE_JSON='{}' ;;
-             esac
-          fi
+          SELECTED_KEYWORD_MAP_STRUCTURE_JSON=""
+          case "$SOURCE_ENV_INPUT" in
+             "BDB_DEV") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_DEV }}' ;;
+             "BDB_EXPERIMENTAL") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_EXPERIMENTAL }}' ;;
+             "BDB_STAGE") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_STAGE }}' ;;
+             "BDB_PREPROD") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD }}' ;;
+             "BDB_PROD") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PROD }}' ;;
+             *) echo "WARNING: No specific keyword map structure secret logic for source '$SOURCE_ENV_INPUT'."; SELECTED_KEYWORD_MAP_STRUCTURE_JSON='{}' ;;
+          esac
 
           if [[ -z "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" || "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" == "null" ]]; then
             echo "Keyword map structure for source '$SOURCE_ENV_INPUT' is not set or empty. Defaulting to no keyword replacements from map."
             SELECTED_KEYWORD_MAP_STRUCTURE_JSON='{}'
           fi
-          echo "Selected Keyword Map Structure (first 100 chars): $(echo "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" | cut -c 1-100)"
-          # Output this for the preview step
+          echo "::add-mask::$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" # Mask sensitive data in logs
           echo "SELECTED_KEYWORD_MAP_STRUCTURE_JSON_CONTENT<<EOF" >> $GITHUB_OUTPUT
           echo "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
 
           # Part 2: Select Target-Specific URL Definitions JSON
-          if [[ -z "$TARGET_URL_DEFINITIONS_JSON" ]]; then
-             case "$TARGET_ENV_INPUT" in
-                "BDB_DEV") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_DEV }}' ;;
-                "BDB_EXPERIMENTAL") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_EXPERIMENTAL }}' ;;
-                "BDB_STAGING") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_STAGING }}' ;;
-                "BDB_PREPROD") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_PREPROD }}' ;;
-                "BDB_PROD") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_PROD }}' ;;
-                *) echo "ERROR: No target URL definitions secret logic for target '$TARGET_ENV_INPUT'."; exit 1 ;;
-             esac
-          fi
+          TARGET_URL_DEFINITIONS_JSON=""
+          case "$TARGET_ENV_INPUT" in
+             "BDB_DEV") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_DEV }}' ;;
+             "BDB_EXPERIMENTAL") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_EXPERIMENTAL }}' ;;
+             "BDB_STAGE") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_STAGE }}' ;;
+             "BDB_PREPROD") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_PREPROD }}' ;;
+             "BDB_PROD") TARGET_URL_DEFINITIONS_JSON='${{ secrets.AUTH0_TARGET_URLS_FOR_BDB_PROD }}' ;;
+             *) echo "ERROR: No target URL definitions secret logic for target '$TARGET_ENV_INPUT'."; exit 1 ;;
+          esac
 
           if [[ -z "$TARGET_URL_DEFINITIONS_JSON" || "$TARGET_URL_DEFINITIONS_JSON" == "null" ]]; then
             echo "ERROR: Target URL definitions for target '$TARGET_ENV_INPUT' are not set or empty."
             exit 1
           fi
-          echo "Target URL Definitions JSON (first 100 chars): $(echo "$TARGET_URL_DEFINITIONS_JSON" | cut -c 1-100)"
-          # Output this for the preview step
+          echo "::add-mask::$TARGET_URL_DEFINITIONS_JSON" # Mask sensitive data in logs
           echo "TARGET_URL_DEFINITIONS_JSON_CONTENT<<EOF" >> $GITHUB_OUTPUT
           echo "$TARGET_URL_DEFINITIONS_JSON" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
           # Part 3: Parse Target URL Definitions and Export Environment Variables for a0deploy
-          # These environment variables (e.g., TARGET_DOCGEN_URL) will be used by a0deploy to resolve ##PLACEHOLDERS##
           echo "Setting environment variables for Auth0 Deploy CLI keyword replacement..."
           echo "$TARGET_URL_DEFINITIONS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r key value; do
             if [[ -n "$key" && -n "$value" ]]; then
-              echo "Exporting $key=$value"
+              echo "Exporting $key=***" # Mask value in log
               echo "$key=$value" >> $GITHUB_ENV
             fi
           done
@@ -181,7 +174,6 @@ jobs:
           else INCLUDED_ONLY_JSON_PART=', "AUTH0_INCLUDED_ONLY": []'; fi
           echo "AUTH0_INCLUDED_ONLY part: $INCLUDED_ONLY_JSON_PART"
 
-
           # Part 5: Construct the final KEYWORD_MAPPINGS_JSON_PART using the selected source map structure
           KEYWORD_MAPPINGS_JSON_PART_VAR=""
           if [[ -n "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" && "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" != "{}" && "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" != "null" ]]; then
@@ -203,14 +195,15 @@ jobs:
           }
           EOF
           echo "Generated $TARGET_CONFIG_FILE:"
-          cat $TARGET_CONFIG_FILE
+          # cat $TARGET_CONFIG_FILE # Avoid printing secrets in config
+          echo "target-config.json generated."
+
         env:
           TARGET_AUTH0_DOMAIN_ENVVAR: ${{ secrets[format('AUTH0_DOMAIN_{0}', github.event.inputs.targetEnv)] }}
           TARGET_AUTH0_CLIENT_ID_ENVVAR: ${{ secrets[format('AUTH0_CLIENT_ID_{0}', github.event.inputs.targetEnv)] }}
           TARGET_AUTH0_CLIENT_SECRET_ENVVAR: ${{ secrets[format('AUTH0_CLIENT_SECRET_{0}', github.event.inputs.targetEnv)] }}
 
       - name: Export from Source Environment
-        # This step is needed for import and preview
         if: github.event.inputs.operation_mode == 'import_to_target' || github.event.inputs.operation_mode == 'preview_resolved_keyword_map'
         run: |
           mkdir -p auth0-export
@@ -228,19 +221,38 @@ jobs:
         run: |
           echo "Generating preview of resolved keyword replacements..."
           # Retrieve the multi-line JSON content from the previous step's output
-          # The quotes are important to preserve multi-line content
           SOURCE_MAP_JSON_CONTENT="${{ steps.prepare_config.outputs.SELECTED_KEYWORD_MAP_STRUCTURE_JSON_CONTENT }}"
           TARGET_URLS_JSON_CONTENT="${{ steps.prepare_config.outputs.TARGET_URL_DEFINITIONS_JSON_CONTENT }}"
 
-          # Check if JSONs are effectively empty (null, empty string, or empty object {}) using jq
+          echo "--- DEBUG: SOURCE_MAP_JSON_CONTENT ---"
+          echo "$SOURCE_MAP_JSON_CONTENT"
+          echo "--- END DEBUG: SOURCE_MAP_JSON_CONTENT ---"
+          echo "--- DEBUG: TARGET_URLS_JSON_CONTENT ---"
+          echo "$TARGET_URLS_JSON_CONTENT"
+          echo "--- END DEBUG: TARGET_URLS_JSON_CONTENT ---"
+
+          # Validate SOURCE_MAP_JSON_CONTENT with jq
+          echo "Validating Source Map JSON..."
+          if ! echo "$SOURCE_MAP_JSON_CONTENT" | jq empty; then
+            echo "ERROR: Source Map JSON is invalid."
+            exit 1
+          fi
+          echo "Source Map JSON is valid."
+
+          # Validate TARGET_URLS_JSON_CONTENT with jq
+          echo "Validating Target URLs JSON..."
+          if ! echo "$TARGET_URLS_JSON_CONTENT" | jq empty; then
+            echo "ERROR: Target URLs JSON is invalid."
+            exit 1
+          fi
+          echo "Target URLs JSON is valid."
+          
           is_source_map_empty=$(echo "$SOURCE_MAP_JSON_CONTENT" | jq 'if . == null or . == "" or . == {} then "empty" else "notempty" end' -r)
           is_target_urls_empty=$(echo "$TARGET_URLS_JSON_CONTENT" | jq 'if . == null or . == "" or . == {} then "empty" else "notempty" end' -r)
 
           if [[ "$is_source_map_empty" == "empty" || "$is_target_urls_empty" == "empty" ]]; then
             echo "Cannot generate preview: Source map structure or target URL definitions are effectively empty."
-            echo "Source Map Content (first 100 chars): $(echo "$SOURCE_MAP_JSON_CONTENT" | head -c 100)"
-            echo "Target URLs Content (first 100 chars): $(echo "$TARGET_URLS_JSON_CONTENT" | head -c 100)"
-            exit 0 # Exit gracefully, not an error for preview if maps are empty
+            exit 0 
           fi
 
           echo "---------------------------------------------------------------------"
@@ -248,17 +260,15 @@ jobs:
           echo " (based on selected source map and target URL definitions)"
           echo "---------------------------------------------------------------------"
           
-          # Use jq to iterate through the source map and resolve placeholders using the target URLs
-          # Pass the entire TARGET_URLS_JSON_CONTENT as an argument to the inner jq
           echo "$SOURCE_MAP_JSON_CONTENT" | jq -r --argjson targetUrls "$TARGET_URLS_JSON_CONTENT" '
             to_entries[] | 
             "Source URL to find: \"\(.key)\"\nPlaceholder in map: \"\(.value)\"\n\(
               if (.value | startswith("##") and endswith("##")) then
                 (.value | ltrimstr("##") | rtrimstr("##")) as $placeholder_name |
-                if $targetUrls[$placeholder_name] != null then
+                if $targetUrls[$placeholder_name] != null and $targetUrls[$placeholder_name] != "null" then # Added check for string "null"
                   "  ↳ Resolves to (Target URL): \"\($targetUrls[$placeholder_name])\""
                 else
-                  "  ↳ WARNING: Placeholder \"\(.value)\" NOT FOUND in target URL definitions!"
+                  "  ↳ WARNING: Placeholder \"\(.value)\" (key: \($placeholder_name)) NOT FOUND or is null in target URL definitions!"
                 end
               else
                 "  ↳ INFO: Value is not a ##PLACEHOLDER##, will be used as is: \"\(.value)\""
@@ -266,18 +276,36 @@ jobs:
             )\n"
           '
           echo "---------------------------------------------------------------------"
-          echo "Preview finished. If running actual import, a0deploy will use environment variables set from the target URL definitions for these replacements."
+          echo "Preview finished."
         
       - name: Warning for Deletion Mode
         if: github.event.inputs.deletionMode == 'allow-deletion-with-confirmation' && github.event.inputs.operation_mode == 'import_to_target'
         run: |
           echo "⚠️ WARNING: DELETION MODE IS ENABLED FOR IMPORT ⚠️"
-          # ... (rest of warning)
+          echo "This operation MAY DELETE resources in the target environment: ${{ github.event.inputs.targetEnv }}"
+          echo "Proceeding with import in 10 seconds. Press Ctrl+C to abort..."
+          sleep 10
+          echo "Proceeding with import operation..."
 
       - name: Import to Target Environment
         if: github.event.inputs.operation_mode == 'import_to_target'
         run: |
-          echo "Here should be the import..."
+          echo "Starting import to ${{ github.event.inputs.targetEnv }}..."
+          echo "The following TARGET_ environment variables (from secrets) are available for keyword replacement by a0deploy:"
+          env | grep '^TARGET_' | grep -vE '^TARGET_AUTH0_DOMAIN_ENVVAR|^TARGET_AUTH0_CLIENT_ID_ENVVAR|^TARGET_AUTH0_CLIENT_SECRET_ENVVAR' || echo "No TARGET_... keyword replacement variables found (this is okay if no map is used)."
+          
+          if [ "${{ github.event.inputs.format }}" == "yaml" ]; then
+            a0deploy import \
+              --config_file=target-config.json \
+              --input_file=auth0-export/tenant.yaml \
+              --debug
+          else 
+            a0deploy import \
+              --config_file=target-config.json \
+              --input_file=auth0-export \
+              --debug
+          fi
+          echo "Import finished."
 
       - name: Upload Target Config for Inspection
         if: github.event.inputs.operation_mode == 'prepare_config_for_download'
