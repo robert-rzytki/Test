@@ -98,14 +98,7 @@ jobs:
           echo "Target Environment: $TARGET_ENV_INPUT"
 
           # Part 1: Select the Source-Specific Keyword Map Structure JSON
-          # The keys in this map structure must match what's in the source tenant's export
-          # The values are ##TARGET_PLACEHOLDER##
-          SOURCE_MAP_SECRET_NAME="AUTH0_KEYWORD_MAP_FROM_${SOURCE_ENV_INPUT}"
-          SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets[SOURCE_MAP_SECRET_NAME] }}'
-          # Fallback for older GitHub Actions syntax if the above doesn't expand:
           if [[ -z "$SELECTED_KEYWORD_MAP_STRUCTURE_JSON" ]]; then
-             # This is a workaround; direct dynamic secret access is preferred if supported by runner.
-             # For now, we will use a case statement as it's more reliable for dynamic secret names.
              case "$SOURCE_ENV_INPUT" in
                 "BDB_DEV") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_DEV }}' ;;
                 "BDB_EXPERIMENTAL") SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_EXPERIMENTAL }}' ;;
