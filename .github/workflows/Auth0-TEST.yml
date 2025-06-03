@@ -104,13 +104,13 @@ jobs:
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_DEV }}'
               ;;
             "BDB_EXPERIMENTAL") 
-              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_EXPERIMENTAL }}' # Or a shared one like AUTH0_KEYWORD_MAP_FROM_DEVLIKE if structure is same as dev
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_EXPERIMENTAL }}'
               ;;
-            "bdb_stage")
-              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_STAGE }}'
+            "BDB_STAGING")
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_STAGING }}'
               ;;
             "BDB_PREPROD")
-              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD }}' # Or AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD if you changed it
+              SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PREPROD }}'
               ;;
             "BDB_PROD") 
               SELECTED_KEYWORD_MAP_STRUCTURE_JSON='${{ secrets.AUTH0_KEYWORD_MAP_FROM_BDB_PROD }}'
@@ -132,7 +132,7 @@ jobs:
           # These V_TARGET_... variables will become environment variables like TARGET_DOCGEN_URL
           # CRITICAL: Fill in ALL V_TARGET_... variables for EACH of your target environments
           case "$TARGET_ENV_INPUT" in
-            "bdbdev")
+            "BDB_DEV")
               V_TARGET_DOCGEN_URL="https://dev.documentgenerator.some-site.de/"
               V_TARGET_USERMGMT_URL="https://dev.usermanagement.some-site.de/"
               V_TARGET_BE_PORTAL_URL="https://bedev.portal2.some-site.de/"
@@ -151,7 +151,7 @@ jobs:
               V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://fedev.portal2.some-site.de"
               V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-sitedev.eu.auth0.com/api/v2/"
               ;;
-            "bdbexperimental")
+            "BDB_EXPERIMENTAL")
               V_TARGET_DOCGEN_URL="https://experimental.documentgenerator.some-site.de/"
               V_TARGET_USERMGMT_URL="https://experimental.usermanagement.some-site.de/"
               V_TARGET_BE_PORTAL_URL="https://beexperimental.portal2.some-site.de/"
@@ -170,7 +170,7 @@ jobs:
               V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://feexperimental.portal2.some-site.de"
               V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-siteexperimental.eu.auth0.com/api/v2/"
               ;;
-            "bdbstage")
+            "BDB_STAGING")
               V_TARGET_DOCGEN_URL="https://stage.documentgenerator.some-site.de/"
               V_TARGET_USERMGMT_URL="https://stage.usermanagement.some-site.de/"
               V_TARGET_BE_PORTAL_URL="https://bestage.portal2.some-site.de/"
@@ -189,7 +189,7 @@ jobs:
               V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://festage.portal2.some-site.de"
               V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-sitestage.eu.auth0.com/api/v2/"
               ;;
-            "bdbpreprod")
+            "BDB_PREPROD")
               V_TARGET_DOCGEN_URL="https://preprod.documentgenerator.some-site.de/"
               V_TARGET_USERMGMT_URL="https://preprod.usermanagement.some-site.de/"
               V_TARGET_BE_PORTAL_URL="https://bepreprod.portal2.some-site.de/"
@@ -208,7 +208,7 @@ jobs:
               V_TARGET_FE_PORTAL_BASE_URL_NOSLASH="https://fepreprod.portal2.some-site.de"
               V_TARGET_AUTH0_MGMT_API_AUDIENCE="https://some-sitepreprod.eu.auth0.com/api/v2/"
               ;;
-            "bdbprod")
+            "BDB_PROD")
               V_TARGET_DOCGEN_URL="https://documentgenerator.some-site.de/"
               V_TARGET_USERMGMT_URL="https://usermanagement.some-site.de/"
               V_TARGET_BE_PORTAL_URL="https://be.portal2.some-site.de/"
