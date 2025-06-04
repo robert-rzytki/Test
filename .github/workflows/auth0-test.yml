@@ -1,4 +1,4 @@
-name: Auth0 Tenant Migration (Dry Run - Generates Transformed tenant.yaml)
+name: Auth0 Tenant Migration - Dry Run
 
 on:
   workflow_dispatch:
