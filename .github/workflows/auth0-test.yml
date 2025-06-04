@@ -23,11 +23,11 @@ on:
           - preprod
           - prod
         default: preprod
-      allow_delete: 
+      allow_delete:
         description: 'Allow deletions in target tenant? (true/false) - For config generation'
-        required: true
+        required: false
         type: boolean
-        default: false
+        default: "false"
 
 jobs:
   prepare-dry-run-config:
@@ -43,7 +43,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18' 
+          node-version: '18'
 
       - name: Install Auth0 Deploy CLI & jq
         run: |
@@ -101,29 +101,28 @@ jobs:
       - name: Prepare Import Config File with Conditional Keyword Mappings
         id: prepare_import_config
         run: |
-          set -e # Exit immediately if a command exits with a non-zero status.
-          set -x # Print commands and their arguments as they are executed.
-
+          set -e
+          set -x
+      
           echo "Validating repository config.json before use..."
           if jq empty config.json > /dev/null 2>&1; then
             echo "Repository config.json is valid JSON."
           else
-            echo "Error: Repository config.json is NOT valid JSON. Please check its content."
-            echo "--- Content of config.json ---"
-            cat config.json
-            echo "-----------------------------"
+            echo "Invalid JSON in config.json"
             exit 1
           fi
           echo "--- Content of config.json being used by jq ---"
           cat config.json
           echo "----------------------------------------------"
 
-
           TARGET_DOMAIN_VALUE="${{ secrets[format('{0}_AUTH0_DOMAIN', env.target_env_name_upper)] }}"
           TARGET_CLIENT_ID_VALUE="${{ secrets[format('{0}_AUTH0_CLIENT_ID', env.target_env_name_upper)] }}"
           TARGET_CLIENT_SECRET_VALUE="${{ secrets[format('{0}_AUTH0_CLIENT_SECRET', env.target_env_name_upper)] }}"
           SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
           TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
+          
+          # Convert boolean to string for bash compatibility
+          ALLOW_DELETE_VALUE="${{ github.event.inputs.allow_delete }}"
 
           SOURCE_PREFIX_DOT="$SOURCE_ENV_NAME."
           SOURCE_PREFIX_BE="be$SOURCE_ENV_NAME."
@@ -172,7 +171,7 @@ jobs:
             --arg target_domain_jq "$TARGET_DOMAIN_VALUE" \
             --arg target_client_id_jq "$TARGET_CLIENT_ID_VALUE" \
             --arg target_client_secret_jq "$TARGET_CLIENT_SECRET_VALUE" \
-            --argjson allow_delete_jq ${{ github.event.inputs.allow_delete }} \
+            --argjson allow_delete_jq "${{ github.event.inputs.allow_delete }}" \
             --arg source_env_name_jq "$SOURCE_ENV_NAME" \
             --arg target_env_name_jq "$TARGET_ENV_NAME" \
             --arg source_prefix_dot_jq "$SOURCE_PREFIX_DOT" \
@@ -193,7 +192,7 @@ jobs:
               --arg target_domain_jq "$TARGET_DOMAIN_VALUE" \
               --arg target_client_id_jq "$TARGET_CLIENT_ID_VALUE" \
               --arg target_client_secret_jq "$TARGET_CLIENT_SECRET_VALUE" \
-              --argjson allow_delete_jq ${{ github.event.inputs.allow_delete }} \
+              --argjson allow_delete_jq "${{ github.event.inputs.allow_delete }}" \
               --arg source_env_name_jq "$SOURCE_ENV_NAME" \
               --arg target_env_name_jq "$TARGET_ENV_NAME" \
               --arg source_prefix_dot_jq "$SOURCE_PREFIX_DOT" \
