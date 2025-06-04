@@ -167,10 +167,6 @@ jobs:
           }
           JQ_PROGRAM_EOF
 
-          echo "--- Content of temp_jq_program.jq ---"
-          cat temp_jq_program.jq
-          echo "------------------------------------"
-
           echo "Executing jq command..."
           jq \
             --arg target_domain_jq "$TARGET_DOMAIN_VALUE" \
@@ -192,6 +188,22 @@ jobs:
           echo "jq command finished with exit code: $JQ_EXIT_CODE"
           if [ $JQ_EXIT_CODE -ne 0 ]; then
             echo "Error: jq command failed."
+            # Attempt to get more detailed error from jq if possible
+            jq \
+              --arg target_domain_jq "$TARGET_DOMAIN_VALUE" \
+              --arg target_client_id_jq "$TARGET_CLIENT_ID_VALUE" \
+              --arg target_client_secret_jq "$TARGET_CLIENT_SECRET_VALUE" \
+              --argjson allow_delete_jq ${{ github.event.inputs.allow_delete }} \
+              --arg source_env_name_jq "$SOURCE_ENV_NAME" \
+              --arg target_env_name_jq "$TARGET_ENV_NAME" \
+              --arg source_prefix_dot_jq "$SOURCE_PREFIX_DOT" \
+              --arg source_prefix_be_jq "$SOURCE_PREFIX_BE" \
+              --arg target_prefix_dot_jq "$TARGET_PREFIX_DOT" \
+              --arg target_prefix_be_jq "$TARGET_PREFIX_BE" \
+              --arg source_auth0_api_env_part_jq "$SOURCE_AUTH0_API_ENV_PART" \
+              --arg target_auth0_api_env_part_jq "$TARGET_AUTH0_API_ENV_PART" \
+              -f temp_jq_program.jq \
+              config.json > /dev/null 2>&1 || echo "jq failed with detailed error above this line if any was printed to stderr"
             exit $JQ_EXIT_CODE
           fi
 
@@ -211,43 +223,60 @@ jobs:
       - name: Simulate Transformation of tenant.yaml
         run: |
           echo "Simulating transformation of tenant.yaml..."
-          node -e "
-            const fs = require('fs');
-            const path = require('path');
+          
+          # Create a temporary Node.js script file
+          cat <<'NODE_SCRIPT_EOF' > transform_script.js
+          const fs = require('fs');
+          const path = require('path');
 
-            const tenantYamlPath = path.join('./auth0_export_source', 'tenant.yaml');
-            const importConfigPath = './temp_import_config.json';
-            const outputTransformedTenantYamlPath = './transformed_tenant_preview.yaml';
+          const tenantYamlPath = path.join('./auth0_export_source', 'tenant.yaml');
+          const importConfigPath = './temp_import_config.json';
+          const outputTransformedTenantYamlPath = './transformed_tenant_preview.yaml';
 
-            if (!fs.existsSync(tenantYamlPath)) {
-              console.error('Error: Source tenant.yaml not found at: ' + tenantYamlPath);
-              process.exit(1);
+          if (!fs.existsSync(tenantYamlPath)) {
+            console.error('Error: Source tenant.yaml not found at: ' + tenantYamlPath);
+            process.exit(1);
+          }
+          if (!fs.existsSync(importConfigPath)) {
+            console.error('Error: Import config (temp_import_config.json) not found.');
+            process.exit(1);
+          }
+
+          let tenantYamlContent = fs.readFileSync(tenantYamlPath, 'utf8');
+          const importConfig = JSON.parse(fs.readFileSync(importConfigPath, 'utf8'));
+          const mappings = importConfig.AUTH0_KEYWORD_REPLACE_MAPPINGS || {};
+          
+          console.log('Applying the following mappings to tenant.yaml:');
+          console.log(JSON.stringify(mappings, null, 2));
+
+          const sortedMappingKeys = Object.keys(mappings).sort((a, b) => b.length - a.length);
+
+          for (const sourceString of sortedMappingKeys) {
+            if (mappings.hasOwnProperty(sourceString)) {
+              const targetString = mappings[sourceString];
+              // Ensure sourceString is treated as a literal string in the RegExp
+              const escapedSourceString = sourceString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const regex = new RegExp(escapedSourceString, 'g');
+              tenantYamlContent = tenantYamlContent.replace(regex, targetString);
             }
-            if (!fs.existsSync(importConfigPath)) {
-              console.error('Error: Import config (temp_import_config.json) not found.');
-              process.exit(1);
-            }
+          }
+          
+          fs.writeFileSync(outputTransformedTenantYamlPath, tenantYamlContent, 'utf8');
+          console.log('Transformed tenant.yaml preview saved to: ' + outputTransformedTenantYamlPath);
+          NODE_SCRIPT_EOF
 
-            let tenantYamlContent = fs.readFileSync(tenantYamlPath, 'utf8');
-            const importConfig = JSON.parse(fs.readFileSync(importConfigPath, 'utf8'));
-            const mappings = importConfig.AUTH0_KEYWORD_REPLACE_MAPPINGS || {};
-            
-            console.log('Applying the following mappings to tenant.yaml:');
-            console.log(JSON.stringify(mappings, null, 2));
+          # Execute the Node.js script from the file
+          node transform_script.js
+          NODE_EXIT_CODE=$?
+          echo "Node.js script finished with exit code: $NODE_EXIT_CODE"
+          
+          rm transform_script.js # Clean up the temporary script file
 
-            const sortedMappingKeys = Object.keys(mappings).sort((a, b) => b.length - a.length);
+          if [ $NODE_EXIT_CODE -ne 0 ]; then
+            echo "Error: Node.js transformation script failed."
+            exit $NODE_EXIT_CODE
+          fi
 
-            for (const sourceString of sortedMappingKeys) {
-              if (mappings.hasOwnProperty(sourceString)) {
-                const targetString = mappings[sourceString];
-                const regex = new RegExp(sourceString.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&'), 'g');
-                tenantYamlContent = tenantYamlContent.replace(regex, targetString);
-              }
-            }
-            
-            fs.writeFileSync(outputTransformedTenantYamlPath, tenantYamlContent, 'utf8');
-            console.log('Transformed tenant.yaml preview saved to: ' + outputTransformedTenantYamlPath);
-          "
       - name: Archive Transformed tenant.yaml Preview
         uses: actions/upload-artifact@v4
         with:
@@ -263,4 +292,3 @@ jobs:
           echo "3. 'transformed-tenant-yaml-for-${{ github.event.inputs.target_environment }}': Contains 'transformed_tenant_preview.yaml', a preview of the main tenant file."
           echo ""
           echo "IMPORTANT: Review 'transformed_tenant_preview.yaml' carefully. Also, manually compare files in 'original-export-from-${{ github.event.inputs.source_environment }}' (like action scripts, page HTML) against the mappings in 'import-config-for-${{ github.event.inputs.target_environment }}' as their content is NOT transformed in this dry run preview file."
-
