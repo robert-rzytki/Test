@@ -1,4 +1,4 @@
-name: Auth0 migration final
+name: Auth0 migration final with validation
 
 on:
   workflow_dispatch:
