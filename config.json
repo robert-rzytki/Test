@@ -1,23 +1,8 @@
 {
-  "AUTH0_DOMAIN": "placeholder",
-  "AUTH0_CLIENT_ID": "placeholder",
-  "AUTH0_CLIENT_SECRET": "placeholder",
-  "AUTH0_INCLUDED_ONLY": [
-    "actions",
-    "clientGrants",
-    "branding",
-    "clients",
-    "emailTemplates",
-    "organizations",
-    "pages",
-    "prompts",
-    "resourceServers",
-    "roles",
-    "tenant",
-    "triggers"
-  ],
-  "AUTH0_EXCLUDED": [],
-  "AUTH0_EXPORT_IDENTIFIERS": false,
+  "AUTH0_DOMAIN": "",
+  "AUTH0_CLIENT_ID": "",
+  "AUTH0_CLIENT_SECRET": "",
   "AUTH0_ALLOW_DELETE": false,
+  "AUTH0_INCLUDED_ONLY": ["actions", "clientGrants", "branding", "clients", "emailTemplates", "organizations", "pages", "prompts", "resourceServers", "roles", "tenant", "triggers"],
   "AUTH0_KEYWORD_REPLACE_MAPPINGS": {}
 }
