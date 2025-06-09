@@ -181,6 +181,11 @@ jobs:
           const sourceEnv = process.env.SOURCE_ENV;
           const targetEnv = process.env.TARGET_ENV;
           const removeLocalhost = process.env.REMOVE_LOCALHOST === 'true';
+          
+          // App1 credentials for target environment
+          const app1Domain = process.env.APP1_DOMAIN;
+          const app1ClientId = process.env.APP1_CLIENT_ID;
+          const app1ClientSecret = process.env.APP1_CLIENT_SECRET;
 
           if (!fs.existsSync(tenantYamlPath)) {
             console.error('Error: Source tenant.yaml not found at: ' + tenantYamlPath);
@@ -271,6 +276,12 @@ jobs:
             if (!action.secrets) {
               action.secrets = [];
             }
+
+            const secretMappings = {
+              'a0domain': app1Domain,
+              'a0ClientID': app1ClientId,
+              'a0ClientSecret': app1ClientSecret
+            };
 
             let updated = false;
             for (const [secretName, secretValue] of Object.entries(secretMappings)) {
@@ -414,6 +425,9 @@ jobs:
           SOURCE_ENV: ${{ github.event.inputs.source_environment }}
           TARGET_ENV: ${{ github.event.inputs.target_environment }}
           REMOVE_LOCALHOST: ${{ github.event.inputs.remove_localhost }}
+          APP1_DOMAIN: ${{ steps.extract_app1_credentials.outputs.app1_domain }}
+          APP1_CLIENT_ID: ${{ steps.extract_app1_credentials.outputs.app1_client_id }}
+          APP1_CLIENT_SECRET: ${{ steps.extract_app1_credentials.outputs.app1_client_secret }}
 
       - name: Prepare Import Config File
         id: prepare_import_config
@@ -669,12 +683,19 @@ jobs:
             exit 1
           fi
 
-      - name: Perform Import Validation
+      - name: Validate Import
         if: github.event.inputs.perform_dry_run == 'true'
         run: |
-          echo "=== PERFORMING IMPORT VALIDATION ==="
           echo "Validating import configuration..."
           a0deploy validate --config_file temp_import_config.json --input_file ./transformed_tenant_preview.yaml || echo "Validation completed with warnings"
+
+      - name: Archive Verification Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-results-${{ github.event.inputs.target_environment }}
+          path: |
+            ./transformed_tenant_preview.yaml
+            temp_import_config.json
 
       - name: Archive Generated Import Config File
         uses: actions/upload-artifact@v4
@@ -687,15 +708,3 @@ jobs:
         with:
           name: transformed-tenant-yaml-for-${{ github.event.inputs.target_environment }}
           path: ./transformed_tenant_preview.yaml
-
-      - name: Archive Verification Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: verification-results-${{ github.event.inputs.target_environment }}
-          path: |
-            ./transformed_tenant_preview.yaml
-            temp_import_config.json
-      
-      - name: Dry Run Instructions
-        run: |
-          echo "DRY RUN COMPLETE. NO ACTUAL IMPORT PERFORMED."
