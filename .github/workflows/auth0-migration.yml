@@ -33,14 +33,14 @@ on:
         required: false
         type: boolean
         default: true
-      perform_import_or_dry_run:
-        description: 'Perform import or dry-run validation'
+      perform_import_or_validation:
+        description: 'Perform import or validation'
         required: true
         type: choice
         options:
           - import
-          - dry-run
-        default: dry-run
+          - validation
+        default: validation
 
 jobs:
   Perform_Auth0_Tenant_Migration:
@@ -322,19 +322,19 @@ jobs:
           echo "Generated import config for ${{ github.event.inputs.target_environment }}"
           
       - name: Dry-Run Validation
-        if: github.event.inputs.perform_import_or_dry_run == 'dry-run'
+        if: github.event.inputs.perform_import_or_validation == 'validation'
         run: |
           echo "Performing dry-run validation for target: ${{ github.event.inputs.target_environment }}..."
           a0deploy validate --config_file temp_import_config.json --input_file ./transformed_tenant.yaml
 
       - name: Import to Target Environment
-        if: github.event.inputs.perform_import_or_dry_run == 'import'
+        if: github.event.inputs.perform_import_or_validation == 'import'
         run: |
           echo "Starting import to target environment: ${{ github.event.inputs.target_environment }}..."
           a0deploy import --config_file temp_import_config.json --input_file ./transformed_tenant.yaml
 
       - name: Notify Import Completion
-        if: github.event.inputs.perform_import_or_dry_run == 'import'
+        if: github.event.inputs.perform_import_or_validation == 'import'
         run: |
           echo "🎉 Auth0 tenant import to ${{ github.event.inputs.target_environment }} has successfully completed!"
           echo "Please review the workflow run logs for details."
