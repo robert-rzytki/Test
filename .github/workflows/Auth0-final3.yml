@@ -1,4 +1,4 @@
-name: Auth0 with validation FINAL 3
+name: Auth0 FINAL 3
 
 on:
   workflow_dispatch:
@@ -283,7 +283,6 @@ jobs:
               'AUTH0_ACTIONS_CLIENT_SECRET': auth0ActionsClientSecret
             };
 
-            let updated = false;
             for (const [secretName, secretValue] of Object.entries(secretMappings)) {
               const existingSecretIndex = action.secrets.findIndex(s => s.name === secretName);
               
@@ -291,41 +290,25 @@ jobs:
                 // Update existing secret
                 action.secrets[existingSecretIndex].value = secretValue;
                 console.log(`Updated '${secretName}' value in action: '${action.name}'.`);
-                updated = true;
               } else {
-                // Check if action has any secrets with these names (even if not found)
-                // This is a more conservative approach - only add if the action already references these secrets
+                // Only add the secret if it's referenced in the code, to avoid adding it to every action.
                 const actionCode = action.code || '';
                 if (actionCode.includes(secretName)) {
                   action.secrets.push({ name: secretName, value: secretValue });
                   console.log(`Added '${secretName}' to action: '${action.name}' (found reference in code).`);
-                  updated = true;
                 }
               }
             }
-            
-            return updated;
           }
 
-          // --- Inject Auth0 Actions secrets into actions that use them ---
+          // --- Inject Auth0 Actions secrets into all actions that use them ---
           if (tenantConfig && tenantConfig.actions && Array.isArray(tenantConfig.actions)) {
             console.log('--- Processing actions for Auth0 Actions secrets injection ---');
-            
             tenantConfig.actions.forEach(action => {
               if (action.name) {
-                const updated = injectAuth0ActionsSecretsIntoAction(action);
-                if (!updated) {
-                  // Check if action has any of the target secret names
-                  const hasTargetSecrets = action.secrets && action.secrets.some(s => 
-                    ['AUTH0_ACTIONS_DOMAIN', 'AUTH0_ACTIONS_CLIENT_ID', 'AUTH0_ACTIONS_CLIENT_SECRET'].includes(s.name)
-                  );
-                  if (hasTargetSecrets) {
-                    console.log(`Action '${action.name}' has target secrets but no updates were made.`);
-                  }
-                }
+                injectAuth0ActionsSecretsIntoAction(action);
               }
             });
-            
             console.log('--- Auth0 Actions secrets injection complete ---');
           } else {
             console.warn("No 'actions' section found in tenant.yaml.");
@@ -588,13 +571,10 @@ jobs:
                 redirectSecretsFound++;
               }
             }
-            
-            // List all secret names (without values for security)
-            console.log(`  All secret names: ${action.secrets.map(s => s.name).join(', ')}`);
           });
           
           console.log('\n=== SUMMARY ===');
-          console.log(`App1 secrets injected: ${app1SecretsFound}`);
+          console.log(`Auth0 Actions secrets injected: ${auth0ActionsSecretsFound}`);
           console.log(`REDIRECT_SECRET injected in target actions: ${redirectSecretsFound}/${redirectSecretActions.length}`);
           
           // Verify specific actions have REDIRECT_SECRET
@@ -613,39 +593,25 @@ jobs:
           node verify_secrets.js
           rm verify_secrets.js
 
-      - name: Compare Before/After Secrets Count
-        run: |
-          echo "=== COMPARING SECRETS COUNT BEFORE/AFTER TRANSFORMATION ==="
-          
-          # Count secrets in original export
-          ORIGINAL_SECRETS=$(cat ./auth0_export_source/tenant.yaml | grep -c "name:" | grep -E "(secrets|name):" || echo "0")
-          
-          # Count secrets in transformed export
-          TRANSFORMED_SECRETS=$(cat ./transformed_tenant_preview.yaml | grep -c "name:" | grep -E "(secrets|name):" || echo "0")
-          
-          echo "This is a rough count - actual verification is done above"
-          echo "Original tenant.yaml secret entries: $ORIGINAL_SECRETS"
-          echo "Transformed tenant.yaml secret entries: $TRANSFORMED_SECRETS"
-
       - name: Validate Credentials Are Available
         run: |
           echo "=== VALIDATING CREDENTIAL AVAILABILITY ==="
           
           # Check if the credentials we're trying to inject actually exist
-          APP1_DOMAIN="${{ steps.extract_app1_credentials.outputs.app1_domain }}"
-          APP1_CLIENT_ID="${{ steps.extract_app1_credentials.outputs.app1_client_id }}"
+          AUTH0_ACTIONS_DOMAIN="${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_domain }}"
+          AUTH0_ACTIONS_CLIENT_ID="${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_id }}"
           REDIRECT_SECRET="${{ steps.generate_redirect_secret.outputs.REDIRECT_SECRET }}"
           
-          if [ -n "$APP1_DOMAIN" ]; then
-            echo "✓ APP1_DOMAIN is available (${APP1_DOMAIN:0:10}...)"
+          if [ -n "$AUTH0_ACTIONS_DOMAIN" ]; then
+            echo "✓ AUTH0_ACTIONS_DOMAIN is available (${AUTH0_ACTIONS_DOMAIN:0:10}...)"
           else
-            echo "✗ APP1_DOMAIN is missing"
+            echo "✗ AUTH0_ACTIONS_DOMAIN is missing"
           fi
           
-          if [ -n "$APP1_CLIENT_ID" ]; then
-            echo "✓ APP1_CLIENT_ID is available (${APP1_CLIENT_ID:0:8}...)"
+          if [ -n "$AUTH0_ACTIONS_CLIENT_ID" ]; then
+            echo "✓ AUTH0_ACTIONS_CLIENT_ID is available (${AUTH0_ACTIONS_CLIENT_ID:0:8}...)"
           else
-            echo "✗ APP1_CLIENT_ID is missing"
+            echo "✗ AUTH0_ACTIONS_CLIENT_ID is missing"
           fi
           
           if [ -n "$REDIRECT_SECRET" ]; then
@@ -683,10 +649,11 @@ jobs:
             exit 1
           fi
 
-      - name: Validate Import
+      - name: Validate Import (Dry Run)
         if: github.event.inputs.perform_dry_run == 'true'
         run: |
           echo "Validating import configuration..."
+          # We use the transformed yaml file as the input for validation/import
           a0deploy validate --config_file temp_import_config.json --input_file ./transformed_tenant_preview.yaml || echo "Validation completed with warnings"
 
       - name: Archive Verification Results
@@ -696,15 +663,3 @@ jobs:
           path: |
             ./transformed_tenant_preview.yaml
             temp_import_config.json
-
-      - name: Archive Generated Import Config File
-        uses: actions/upload-artifact@v4
-        with:
-          name: import-config-for-${{ github.event.inputs.target_environment }}
-          path: temp_import_config.json
-
-      - name: Archive Transformed tenant.yaml Preview
-        uses: actions/upload-artifact@v4
-        with:
-          name: transformed-tenant-yaml-for-${{ github.event.inputs.target_environment }}
-          path: ./transformed_tenant_preview.yaml
