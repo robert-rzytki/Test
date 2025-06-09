@@ -117,7 +117,7 @@ jobs:
             exit 1
           fi
           
-          SOURCE_CONFIG_PATH="Auth0/${{ github.event.inputs.source_environment }}/config.json"
+          SOURCE_CONFIG_PATH="Auth0/config.json"
           
           if [ ! -f "$SOURCE_CONFIG_PATH" ]; then
             echo "Error: Config file $SOURCE_CONFIG_PATH does not exist."
