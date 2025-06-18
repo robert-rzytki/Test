@@ -27,7 +27,7 @@ on:
         description: 'Allow deletions in target tenant? (true/false)'
         required: true
         type: boolean
-        default: true
+        default: false
       remove_localhost:
         description: 'Remove localhost entries'
         required: false
@@ -40,7 +40,7 @@ on:
         options:
           - import
           - validation
-        default: import
+        default: validation
 
 jobs:
   Perform_Auth0_Tenant_Migration:
@@ -132,17 +132,18 @@ jobs:
           echo "::add-mask::$REDIRECT_SECRET"
           echo "REDIRECT_SECRET=$REDIRECT_SECRET" >> $GITHUB_OUTPUT
 
-      - name: Transform Config Files (Secrets, Localhost, Grants)
+      - name: Transform Config Files (Secrets, Localhost, URLs)
         run: |
           echo "Transforming configuration files..."
           
+          # This script handles transformations that are safe to do pre-import,
+          # like injecting secrets, removing localhost, and replacing non-identifier URLs.
           cat <<'NODE_SCRIPT_EOF' > transform_script.js
           const fs = require('fs');
           const path = require('path');
           const yaml = require('js-yaml');
           const { globSync } = require('glob');
 
-          // --- Environment and Secret Variables ---
           const sourceEnv = process.env.SOURCE_ENV;
           const targetEnv = process.env.TARGET_ENV;
           const exportDir = './auth0_export_source';
@@ -158,27 +159,24 @@ jobs:
               console.log('Transforming tenant.yaml...');
               let tenantConfig = yaml.load(fs.readFileSync(tenantYamlPath, 'utf8'));
 
-              // Localhost Removal Logic
+              // Remove localhost entries
               if (removeLocalhost) {
                   console.log('Removing localhost entries...');
-                  function traverseAndModify(obj) {
-                      if (Array.isArray(obj)) {
-                          return obj.map(item => traverseAndModify(item));
-                      }
+                  const removeLocalhostFromArray = (arr) => arr.filter(item => typeof item !== 'string' || (!item.includes('localhost') && !item.includes('127.0.0.1')));
+                  const traverseAndRemove = (obj) => {
+                      if (Array.isArray(obj)) return removeLocalhostFromArray(obj);
                       if (typeof obj === 'object' && obj !== null) {
-                          const newObj = {};
-                          for (const key in obj) {
-                              if (['callbacks', 'allowed_origins', 'web_origins', 'allowed_logout_urls'].includes(key) && Array.isArray(obj[key])) {
-                                  newObj[key] = obj[key].filter(item => typeof item !== 'string' || (!item.includes('localhost') && !item.includes('127.0.0.1')));
+                          Object.keys(obj).forEach(key => {
+                              if (['callbacks', 'allowed_origins', 'web_origins', 'allowed_logout_urls'].includes(key)) {
+                                  obj[key] = removeLocalhostFromArray(obj[key]);
                               } else {
-                                  newObj[key] = traverseAndModify(obj[key]);
+                                  obj[key] = traverseAndRemove(obj[key]);
                               }
-                          }
-                          return newObj;
+                          });
                       }
                       return obj;
-                  }
-                  tenantConfig = traverseAndModify(tenantConfig);
+                  };
+                  tenantConfig = traverseAndRemove(tenantConfig);
               }
               
               // Inject secrets into actions
@@ -202,34 +200,16 @@ jobs:
                       }
                   });
               }
-
-              // **HYBRID SOLUTION: Pre-replace audience in Client Grants**
-              if (tenantConfig.clientGrants) {
-                  console.log('Pre-replacing audience in clientGrants...');
-                  const getApiEnvPart = (env) => (env === 'stage' ? 'staging' : env);
-                  const sourceApiEnvPart = getApiEnvPart(sourceEnv);
-                  const targetApiEnvPart = getApiEnvPart(targetEnv);
-                  const sourceAudience = `https://bdb${sourceApiEnvPart}.eu.auth0.com/api/v2/`;
-                  const targetAudience = `https://bdb${targetApiEnvPart}.eu.auth0.com/api/v2/`;
-
-                  tenantConfig.clientGrants.forEach(grant => {
-                      if (grant.audience === sourceAudience) {
-                          console.log(`Mapping audience in grant for client ${grant.client_id} to ${targetAudience}`);
-                          grant.audience = targetAudience;
-                      }
-                  });
-              }
-
               fs.writeFileSync(tenantYamlPath, yaml.dump(tenantConfig, { lineWidth: -1, noRefs: true }), 'utf8');
               console.log('tenant.yaml transformation complete.');
           }
 
           // --- 2. URL replacements in non-YAML files (Actions, Branding) ---
-          console.log('Replacing non-identifier URLs in JS and HTML files...');
+          console.log('Replacing URLs in JS and HTML files...');
           const getPrefix = (env) => (env === 'prod' ? '' : `${env}.`);
           const urlMappings = {
             [`https://${getPrefix(sourceEnv)}portal2.bankenverband.de`]: `https://${getPrefix(targetEnv)}portal2.bankenverband.de`,
-            [`http://${getPrefix(sourceEnv)}portal2.bankenverband.de`]: `https://${getPrefix(targetEnv)}portal2.bankenverband.de`,
+            // Add other non-identifier URL mappings here if necessary
           };
           
           const files = globSync(`${exportDir}/**/{actions,branding_templates}/**/*.{js,html}`);
