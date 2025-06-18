@@ -331,7 +331,7 @@ jobs:
         if: github.event.inputs.perform_import_or_validation == 'validation'
         run: |
           echo "Performing dry-run validation for target: ${{ github.event.inputs.target_environment }}..."
-          a0deploy validate --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml
+          a0deploy validate --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml --log_level debug
 
       - name: Import to Target Environment
         if: github.event.inputs.perform_import_or_validation == 'import'
