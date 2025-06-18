@@ -116,7 +116,7 @@ jobs:
           --arg client_id "$SOURCE_CLIENT_ID" \
           --arg client_secret "$SOURCE_CLIENT_SECRET" \
           --argjson included_only '["actions", "clientGrants", "branding", "clients", "emailTemplates", "organizations", "pages", "prompts", "resourceServers", "roles", "tenant", "triggers"]' \
-          '.AUTH0_DOMAIN = $domain | .AUTH0_CLIENT_ID = $client_id | .AUTH0_CLIENT_SECRET = $client_secret | .AUTH0_ALLOW_DELETE = false | .AUTH0_INCLUDED_ONLY = $included_only' \
+          '.AUTH0_DOMAIN = $domain | .AUTH0_CLIENT_ID = $client_id | .AUTH0_CLIENT_SECRET = $client_secret | .AUTH0_ALLOW_DELETE = true | .AUTH0_INCLUDED_ONLY = $included_only' \
           "$SOURCE_CONFIG_PATH" > temp_export_config.json
 
           echo "Exporting from $SOURCE_DOMAIN..."
