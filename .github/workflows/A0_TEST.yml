@@ -276,7 +276,7 @@ jobs:
           const targetEnv = process.env.TARGET_ENV;
           const exportDir = './auth0_export_source';
           
-          console.log(`Starting URL replacement in files for migration from '${sourceEnv}' to '${targetEnv}'.`);
+          console.log(`Starting URL replacement for migration from '${sourceEnv}' to '${targetEnv}'.`);
 
           // Function to construct domain prefixes based on environment
           const getPrefix = (env) => (env === 'prod' ? '' : `${env}.`);
@@ -286,19 +286,25 @@ jobs:
           const targetPrefix = getPrefix(targetEnv);
           const sourceBePrefix = getBePrefix(sourceEnv);
           const targetBePrefix = getBePrefix(targetEnv);
+          
+          // Use https for all target URLs as a best practice
+          const targetProtocol = 'https';
 
           const urlMappings = {
-              [`https://${sourcePrefix}documentgenerator.bankenverband.de`]: `https://${targetPrefix}documentgenerator.bankenverband.de`,
-              [`https://${sourcePrefix}usermanagement.bankenverband.de`]: `https://${targetPrefix}usermanagement.bankenverband.de`,
-              [`https://${sourceBePrefix}portal2.bankenverband.de`]: `https://${targetBePrefix}portal2.bankenverband.de`,
-              [`https://${sourceBePrefix}elsa.bankenverband.de`]: `https://${targetBePrefix}elsa.bankenverband.de`,
-              [`https://${sourcePrefix}elsa.bankenverband.de`]: `https://${targetPrefix}elsa.bankenverband.de`,
-              [`https://${sourcePrefix}portal2.bankenverband.de`]: `https://${targetPrefix}portal2.bankenverband.de`,
+              // Standard HTTPS URLs
+              [`https://${sourcePrefix}documentgenerator.bankenverband.de`]: `${targetProtocol}://${targetPrefix}documentgenerator.bankenverband.de`,
+              [`https://${sourcePrefix}usermanagement.bankenverband.de`]: `${targetProtocol}://${targetPrefix}usermanagement.bankenverband.de`,
+              [`https://${sourceBePrefix}portal2.bankenverband.de`]: `${targetProtocol}://${targetBePrefix}portal2.bankenverband.de`,
+              [`https://${sourceBePrefix}elsa.bankenverband.de`]: `${targetProtocol}://${targetBePrefix}elsa.bankenverband.de`,
+              [`https://${sourcePrefix}elsa.bankenverband.de`]: `${targetProtocol}://${targetPrefix}elsa.bankenverband.de`,
+              [`https://${sourcePrefix}portal2.bankenverband.de`]: `${targetProtocol}://${targetPrefix}portal2.bankenverband.de`,
+              
+              // **FIX**: Handle the HTTP link found in universal_login.html for 'Terms of use'
+              [`http://${sourcePrefix}portal2.bankenverband.de`]: `${targetProtocol}://${targetPrefix}portal2.bankenverband.de`,
+
+              // **FIX**: Handle hardcoded production favicon URL if the source is not prod
+              [`https://portal2.bankenverband.de`]: `${targetProtocol}://${targetPrefix}portal2.bankenverband.de`
           };
-          
-          if (sourceEnv === 'dev') {
-            urlMappings[`https://dev.portal2.bankenverband.de/assets/logo.svg`] = `https://${targetPrefix}portal2.bankenverband.de/assets/logo.svg`;
-          }
 
           const files = globSync(`${exportDir}/**/{actions,branding_templates}/**/*.{js,html}`);
 
@@ -315,6 +321,11 @@ jobs:
                   const originalContent = content;
 
                   for (const [sourceUrl, targetUrl] of Object.entries(urlMappings)) {
+                      // Skip replacing the hardcoded prod URL if the source is already prod
+                      if (sourceUrl === 'https://portal2.bankenverband.de' && sourceEnv === 'prod') {
+                          continue;
+                      }
+
                       const sourceUrlRegex = new RegExp(sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
                       content = content.replace(sourceUrlRegex, targetUrl);
                   }
