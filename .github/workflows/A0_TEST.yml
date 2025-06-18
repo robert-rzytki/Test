@@ -23,11 +23,6 @@ on:
           - preprod
           - prod
         default: stage
-      allow_delete:
-        description: 'Allow deletions in target tenant? (true/false)'
-        required: false
-        type: boolean
-        default: false
       remove_localhost:
         description: 'Remove localhost entries'
         required: false
@@ -370,57 +365,17 @@ jobs:
             exit 1
           fi
           
-          SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
-          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
-          ALLOW_DELETE_VALUE="${{ github.event.inputs.allow_delete }}"
-
-          SOURCE_PREFIX_DOT="$SOURCE_ENV_NAME."
-          SOURCE_PREFIX_BE="be$SOURCE_ENV_NAME."
-          
-          if [ "$TARGET_ENV_NAME" = "prod" ]; then
-            TARGET_PREFIX_DOT="" 
-            TARGET_PREFIX_BE="be." 
-            TARGET_AUTH0_API_ENV_PART="prod" 
-          else
-            TARGET_PREFIX_DOT="$TARGET_ENV_NAME."
-            TARGET_PREFIX_BE="be$TARGET_ENV_NAME."
-            TARGET_AUTH0_API_ENV_PART="$TARGET_ENV_NAME" 
-          fi
-
-          SOURCE_AUTH0_API_ENV_PART="$SOURCE_ENV_NAME"
-          if [ "$SOURCE_ENV_NAME" = "stage" ]; then
-            SOURCE_AUTH0_API_ENV_PART="staging" 
-          fi
-          
           jq \
             --arg target_domain "$TARGET_DOMAIN_VALUE" \
             --arg target_client_id "$TARGET_CLIENT_ID_VALUE" \
             --arg target_client_secret "$TARGET_CLIENT_SECRET_VALUE" \
-            --argjson allow_delete "$ALLOW_DELETE_VALUE" \
             --argjson included_only '["actions", "clientGrants", "branding", "clients", "emailTemplates", "organizations", "pages", "prompts", "resourceServers", "roles", "tenant", "triggers"]' \
-            --arg source_prefix_dot "$SOURCE_PREFIX_DOT" \
-            --arg source_prefix_be "$SOURCE_PREFIX_BE" \
-            --arg target_prefix_dot "$TARGET_PREFIX_DOT" \
-            --arg target_prefix_be "$TARGET_PREFIX_BE" \
-            --arg source_auth0_api_env_part "$SOURCE_AUTH0_API_ENV_PART" \
-            --arg target_auth0_api_env_part "$TARGET_AUTH0_API_ENV_PART" \
             '
             .AUTH0_DOMAIN = $target_domain |
             .AUTH0_CLIENT_ID = $target_client_id |
             .AUTH0_CLIENT_SECRET = $target_client_secret |
-            .AUTH0_ALLOW_DELETE = $allow_delete |
-            .AUTH0_INCLUDED_ONLY = $included_only |
-            .AUTH0_KEYWORD_REPLACE_MAPPINGS = {
-              ("https://" + $source_prefix_dot + "documentgenerator.bankenverband.de/"): ("https://" + $target_prefix_dot + "documentgenerator.bankenverband.de/"),
-              ("https://" + $source_prefix_dot + "usermanagement.bankenverband.de/"): ("https://" + $target_prefix_dot + "usermanagement.bankenverband.de/"),
-              ("https://" + $source_prefix_be + "portal2.bankenverband.de/"): ("https://" + $target_prefix_be + "portal2.bankenverband.de/"),
-              ("https://" + $source_prefix_be + "elsa.bankenverband.de/"): ("https://" + $target_prefix_be + "elsa.bankenverband.de/"),
-              ("https://" + $source_prefix_dot + "elsa.bankenverband.de"): ("https://" + $target_prefix_dot + "elsa.bankenverband.de"), 
-              ("https://" + $source_prefix_dot + "portal2.bankenverband.de"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de"),
-              # The audience mapping is now handled by the transform_script.js, but we keep the API URL mapping for other potential uses.
-              ("https://bdb" + $source_auth0_api_env_part + ".eu.auth0.com/api/v2/"): ("https://bdb" + $target_auth0_api_env_part + ".eu.auth0.com/api/v2/"),
-              ("https://dev.portal2.bankenverband.de/assets/logo.svg"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de/assets/logo.svg")
-            }
+            .AUTH0_ALLOW_DELETE = false |
+            .AUTH0_INCLUDED_ONLY = $included_only
             ' \
             "$TARGET_CONFIG_PATH" > temp_import_config.json
           
