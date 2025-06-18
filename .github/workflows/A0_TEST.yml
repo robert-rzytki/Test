@@ -72,27 +72,20 @@ jobs:
       - name: Extract Auth0 Actions Credentials for Target Environment
         id: extract_auth0_actions_credentials
         run: |
-          # Extract Auth0 Actions credentials from JSON secrets for target environment
           TARGET_ENV="${{ github.event.inputs.target_environment }}"
-          
           AUTH0_ACTIONS_DOMAINS='${{ secrets.AUTH0_ACTIONS_DOMAINS }}'
           AUTH0_ACTIONS_CLIENT_IDS='${{ secrets.AUTH0_ACTIONS_CLIENT_IDS }}'
           AUTH0_ACTIONS_CLIENT_SECRETS='${{ secrets.AUTH0_ACTIONS_CLIENT_SECRETS }}'
           
-          # Extract values for target environment
           AUTH0_ACTIONS_DOMAIN=$(echo "$AUTH0_ACTIONS_DOMAINS" | jq -r --arg env "$TARGET_ENV" '.[$env]')
           AUTH0_ACTIONS_CLIENT_ID=$(echo "$AUTH0_ACTIONS_CLIENT_IDS" | jq -r --arg env "$TARGET_ENV" '.[$env]')
           AUTH0_ACTIONS_CLIENT_SECRET=$(echo "$AUTH0_ACTIONS_CLIENT_SECRETS" | jq -r --arg env "$TARGET_ENV" '.[$env]')
           
-          # Validate extraction
           if [ "$AUTH0_ACTIONS_DOMAIN" = "null" ] || [ "$AUTH0_ACTIONS_CLIENT_ID" = "null" ] || [ "$AUTH0_ACTIONS_CLIENT_SECRET" = "null" ]; then
             echo "Error: Could not extract Auth0 Actions credentials for environment: $TARGET_ENV"
             exit 1
           fi
           
-          echo "Successfully extracted Auth0 Actions credentials for environment: $TARGET_ENV"
-          
-          # Set outputs (masked for security)
           echo "::add-mask::$AUTH0_ACTIONS_DOMAIN"
           echo "::add-mask::$AUTH0_ACTIONS_CLIENT_ID"
           echo "::add-mask::$AUTH0_ACTIONS_CLIENT_SECRET"
@@ -102,7 +95,6 @@ jobs:
 
       - name: Set Source Auth0 Credentials and Export
         run: |
-          # Get source environment credentials from secrets
           SOURCE_DOMAIN="${{ secrets[format('{0}_AUTH0_DOMAIN', env.source_env_name_upper)] }}"
           SOURCE_CLIENT_ID="${{ secrets[format('{0}_AUTH0_CLIENT_ID', env.source_env_name_upper)] }}"
           SOURCE_CLIENT_SECRET="${{ secrets[format('{0}_AUTH0_CLIENT_SECRET', env.source_env_name_upper)] }}"
@@ -119,7 +111,6 @@ jobs:
             exit 1
           fi
 
-          # Create export config with credentials
           jq \
           --arg domain "$SOURCE_DOMAIN" \
           --arg client_id "$SOURCE_CLIENT_ID" \
@@ -138,114 +129,146 @@ jobs:
           echo "::add-mask::$REDIRECT_SECRET"
           echo "REDIRECT_SECRET=$REDIRECT_SECRET" >> $GITHUB_OUTPUT
 
-      - name: Transform tenant.yaml (incl. Client Grant Audiences)
+      - name: Transform Tenant Config and Replace URLs
         run: |
-          echo "Transforming tenant.yaml with secrets, keyword mappings, and client grant audiences..."
-          
-          cat <<'NODE_SCRIPT_EOF' > transform_script.js
+          echo "Starting full transformation of exported Auth0 configuration..."
+          cat <<'NODE_SCRIPT_EOF' > full_transform_script.js
           const fs = require('fs');
           const path = require('path');
           const yaml = require('js-yaml');
+          const { globSync } = require('glob');
 
-          const tenantYamlPath = path.join('./auth0_export_source', 'tenant.yaml');
-          const outputTransformedTenantYamlPath = tenantYamlPath;
-          const redirectSecretValue = process.env.REDIRECT_SECRET_VALUE;
+          // --- Environment and Secret Variables ---
           const sourceEnv = process.env.SOURCE_ENV;
           const targetEnv = process.env.TARGET_ENV;
+          const redirectSecretValue = process.env.REDIRECT_SECRET_VALUE;
           const removeLocalhost = process.env.REMOVE_LOCALHOST === 'true';
-          
           const auth0ActionsDomain = process.env.AUTH0_ACTIONS_DOMAIN;
           const auth0ActionsClientId = process.env.AUTH0_ACTIONS_CLIENT_ID;
           const auth0ActionsClientSecret = process.env.AUTH0_ACTIONS_CLIENT_SECRET;
+          const exportDir = './auth0_export_source';
 
-          if (!fs.existsSync(tenantYamlPath)) {
-            console.error('Error: Source tenant.yaml not found at: ' + tenantYamlPath);
-            process.exit(1);
-          }
+          console.log(`Starting transformation for migration from '${sourceEnv}' to '${targetEnv}'.`);
 
-          let tenantYamlContent = fs.readFileSync(tenantYamlPath, 'utf8');
-          let tenantConfig = yaml.load(tenantYamlContent);
+          // --- Helper Functions for URL/Identifier Construction ---
+          const getPrefix = (env) => (env === 'prod' ? '' : `${env}.`);
+          const getBePrefix = (env) => (env === 'prod' ? 'be.' : `be${env}.`);
+          const getApiEnvPart = (env) => (env === 'stage' ? 'staging' : env);
 
-          function removeLocalhostFromArray(arr) {
-            if (!Array.isArray(arr)) return arr;
-            return arr.filter(item => typeof item !== 'string' || (!item.includes('localhost') && !item.includes('127.0.0.1')));
-          }
+          // --- Construct URL Mappings ---
+          const sourcePrefixDot = getPrefix(sourceEnv);
+          const targetPrefixDot = getPrefix(targetEnv);
+          const sourcePrefixBe = getBePrefix(sourceEnv);
+          const targetPrefixBe = getBePrefix(targetEnv);
+          const sourceAuth0ApiEnvPart = getApiEnvPart(sourceEnv);
+          const targetAuth0ApiEnvPart = getApiEnvPart(targetEnv);
 
-          function removeLocalhostFromObject(obj) {
-            if (Array.isArray(obj)) {
-              return removeLocalhostFromArray(obj);
-            } else if (typeof obj === 'object' && obj !== null) {
-              const result = {};
-              for (const [key, value] of Object.entries(obj)) {
-                if (['callbacks', 'allowed_origins', 'web_origins', 'allowed_logout_urls'].includes(key)) {
-                  result[key] = removeLocalhostFromArray(value);
-                } else {
-                  result[key] = removeLocalhostFromObject(value);
-                }
-              }
-              return result;
-            }
-            return obj;
-          }
-
-          if (removeLocalhost) {
-            console.log('Removing localhost entries...');
-            tenantConfig = removeLocalhostFromObject(tenantConfig);
-          }
-
-          function injectAuth0ActionsSecrets(action) {
-            if (!action.secrets) action.secrets = [];
-            const secretMappings = {
-              'a0Domain': auth0ActionsDomain,
-              'a0ActionsClientId': auth0ActionsClientId,
-              'a0ActionsClientSecret': auth0ActionsClientSecret
-            };
-            for (const [name, value] of Object.entries(secretMappings)) {
-              const existing = action.secrets.find(s => s.name === name);
-              if (existing) existing.value = value;
-            }
-          }
+          const urlMappings = {
+            [`https://${sourcePrefixDot}documentgenerator.bankenverband.de/`]: `https://${targetPrefixDot}documentgenerator.bankenverband.de/`,
+            [`https://${sourcePrefixDot}usermanagement.bankenverband.de/`]: `https://${targetPrefixDot}usermanagement.bankenverband.de/`,
+            [`https://${sourcePrefixBe}portal2.bankenverband.de/`]: `https://${targetPrefixBe}portal2.bankenverband.de/`,
+            [`https://${sourcePrefixBe}elsa.bankenverband.de/`]: `https://${targetPrefixBe}elsa.bankenverband.de/`,
+            [`https://${sourcePrefixDot}elsa.bankenverband.de`]: `https://${targetPrefixDot}elsa.bankenverband.de`,
+            [`https://${sourcePrefixDot}portal2.bankenverband.de`]: `https://${targetPrefixDot}portal2.bankenverband.de`,
+            [`http://${sourcePrefixDot}portal2.bankenverband.de`]: `https://${targetPrefixDot}portal2.bankenverband.de`, // Handle insecure http
+            [`https://bdb${sourceAuth0ApiEnvPart}.eu.auth0.com/api/v2/`]: `https://bdb${targetAuth0ApiEnvPart}.eu.auth0.com/api/v2/`,
+            [`https://dev.portal2.bankenverband.de/assets/logo.svg`]: `https://${targetPrefixDot}portal2.bankenverband.de/assets/logo.svg`,
+            // Handle hardcoded production favicon URL if the source is not prod
+            ...(sourceEnv !== 'prod' && { [`https://portal2.bankenverband.de`]: `https://${targetPrefixDot}portal2.bankenverband.de` })
+          };
           
-          if (tenantConfig?.actions) {
-            tenantConfig.actions.forEach(action => injectAuth0ActionsSecrets(action));
-            const actionsToUpdate = ['[Guard] Terms of use ', '[MFA] Email OTP'];
-            actionsToUpdate.forEach(actionName => {
-              const targetAction = tenantConfig.actions.find(action => action.name === actionName);
-              if (targetAction) {
-                if (!targetAction.secrets) targetAction.secrets = [];
-                const secret = targetAction.secrets.find(s => s.name === 'REDIRECT_SECRET');
-                if (secret) secret.value = redirectSecretValue;
-                else targetAction.secrets.push({ name: 'REDIRECT_SECRET', value: redirectSecretValue });
-              }
-            });
-          }
-          
-          // ** NEW: Update client grant audiences **
-          if (tenantConfig?.clientGrants) {
-              console.log('Updating client grant audiences...');
-              const getApiEnvPart = (env) => (env === 'stage' ? 'staging' : env);
-              
-              const sourceApiEnvPart = getApiEnvPart(sourceEnv);
-              const targetApiEnvPart = getApiEnvPart(targetEnv);
+          console.log("Constructed URL Mappings:", urlMappings);
 
-              const sourceAudience = `https://bdb${sourceApiEnvPart}.eu.auth0.com/api/v2/`;
-              const targetAudience = `https://bdb${targetApiEnvPart}.eu.auth0.com/api/v2/`;
-
-              console.log(`Mapping audience from '${sourceAudience}' to '${targetAudience}'`);
-              tenantConfig.clientGrants.forEach(grant => {
-                  if (grant.audience === sourceAudience) {
-                      grant.audience = targetAudience;
-                      console.log(`Updated audience for client_id: ${grant.client_id}`);
+          // --- File-based Transformations ---
+          // Process all relevant files for string replacement.
+          const filesToProcess = globSync(`${exportDir}/**/*.{js,html,yaml}`);
+          if (filesToProcess.length === 0) {
+              console.warn("Warning: No files found to process for URL replacements.");
+          } else {
+              console.log(`Found ${filesToProcess.length} files to process for URL replacement...`);
+              filesToProcess.forEach(file => {
+                  try {
+                      let content = fs.readFileSync(file, 'utf8');
+                      const originalContent = content;
+                      for (const [sourceUrl, targetUrl] of Object.entries(urlMappings)) {
+                          // Use a global regex for replacement
+                          const sourceUrlRegex = new RegExp(sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+                          content = content.replace(sourceUrlRegex, targetUrl);
+                      }
+                      if (content !== originalContent) {
+                          console.log(`Updated URLs in: ${file}`);
+                          fs.writeFileSync(file, content, 'utf8');
+                      }
+                  } catch (err) {
+                      console.error(`Error processing file ${file}:`, err);
+                      process.exit(1);
                   }
               });
           }
 
-          tenantYamlContent = yaml.dump(tenantConfig, { lineWidth: -1, noRefs: true });
-          fs.writeFileSync(outputTransformedTenantYamlPath, tenantYamlContent, 'utf8');
-          console.log('Transformed tenant.yaml saved to: ' + outputTransformedTenantYamlPath);
+          // --- YAML-specific Transformations (tenant.yaml) ---
+          const tenantYamlPath = path.join(exportDir, 'tenant.yaml');
+          if (!fs.existsSync(tenantYamlPath)) {
+              console.warn(`Warning: tenant.yaml not found at: ${tenantYamlPath}. Skipping YAML-specific transformations.`);
+              return;
+          }
+
+          console.log('Performing YAML-specific transformations on tenant.yaml...');
+          let tenantConfig = yaml.load(fs.readFileSync(tenantYamlPath, 'utf8'));
+
+          // 1. Remove Localhost
+          function removeLocalhostFromArray(arr) {
+              if (!Array.isArray(arr)) return arr;
+              return arr.filter(item => typeof item !== 'string' || (!item.includes('localhost') && !item.includes('127.0.0.1')));
+          }
+          function traverseAndRemoveLocalhost(obj) {
+              if (Array.isArray(obj)) {
+                  return removeLocalhostFromArray(obj);
+              } else if (typeof obj === 'object' && obj !== null) {
+                  for (const key in obj) {
+                      if (['callbacks', 'allowed_origins', 'web_origins', 'allowed_logout_urls'].includes(key)) {
+                          obj[key] = removeLocalhostFromArray(obj[key]);
+                      } else {
+                          obj[key] = traverseAndRemoveLocalhost(obj[key]);
+                      }
+                  }
+              }
+              return obj;
+          }
+          if (removeLocalhost) {
+              console.log('Removing localhost entries from tenant.yaml...');
+              tenantConfig = traverseAndRemoveLocalhost(tenantConfig);
+          }
+
+          // 2. Inject Secrets
+          if (tenantConfig?.actions) {
+              console.log('Injecting secrets into actions...');
+              tenantConfig.actions.forEach(action => {
+                  if (!action.secrets) action.secrets = [];
+                  const secretMappings = {
+                      'a0Domain': auth0ActionsDomain,
+                      'a0ActionsClientId': auth0ActionsClientId,
+                      'a0ActionsClientSecret': auth0ActionsClientSecret
+                  };
+                  for (const [name, value] of Object.entries(secretMappings)) {
+                      const existing = action.secrets.find(s => s.name === name);
+                      if (existing) existing.value = value;
+                  }
+                  
+                  if (['[Guard] Terms of use ', '[MFA] Email OTP'].includes(action.name)) {
+                      const secret = action.secrets.find(s => s.name === 'REDIRECT_SECRET');
+                      if (secret) secret.value = redirectSecretValue;
+                      else action.secrets.push({ name: 'REDIRECT_SECRET', value: redirectSecretValue });
+                  }
+              });
+          }
+
+          // Save the transformed tenant.yaml
+          fs.writeFileSync(tenantYamlPath, yaml.dump(tenantConfig, { lineWidth: -1, noRefs: true }), 'utf8');
+          console.log('YAML-specific transformations complete. Transformed tenant.yaml saved.');
           NODE_SCRIPT_EOF
 
-          node transform_script.js
+          node full_transform_script.js
           if [ $? -ne 0 ]; then
             echo "Error: Node.js transformation script failed."
             exit 1
@@ -259,98 +282,9 @@ jobs:
           AUTH0_ACTIONS_CLIENT_ID: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_id }}
           AUTH0_ACTIONS_CLIENT_SECRET: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_secret }}
 
-      - name: Replace URLs in Actions and Branding Templates
-        run: |
-          echo "Replacing environment-specific URLs in Actions and Branding Template files..."
-          cat <<'NODE_SCRIPT_EOF' > replace_urls_in_files.js
-          const fs = require('fs');
-          const path = require('path');
-          const { globSync } = require('glob');
-
-          const sourceEnv = process.env.SOURCE_ENV;
-          const targetEnv = process.env.TARGET_ENV;
-          const exportDir = './auth0_export_source';
-          
-          console.log(`Starting URL replacement for migration from '${sourceEnv}' to '${targetEnv}'.`);
-
-          // Function to construct domain prefixes based on environment
-          const getPrefix = (env) => (env === 'prod' ? '' : `${env}.`);
-          const getBePrefix = (env) => (env === 'prod' ? 'be.' : `be${env}.`);
-
-          const sourcePrefix = getPrefix(sourceEnv);
-          const targetPrefix = getPrefix(targetEnv);
-          const sourceBePrefix = getBePrefix(sourceEnv);
-          const targetBePrefix = getBePrefix(targetEnv);
-          
-          // Use https for all target URLs as a best practice
-          const targetProtocol = 'https';
-
-          const urlMappings = {
-              // Standard HTTPS URLs
-              [`https://${sourcePrefix}documentgenerator.bankenverband.de`]: `${targetProtocol}://${targetPrefix}documentgenerator.bankenverband.de`,
-              [`https://${sourcePrefix}usermanagement.bankenverband.de`]: `${targetProtocol}://${targetPrefix}usermanagement.bankenverband.de`,
-              [`https://${sourceBePrefix}portal2.bankenverband.de`]: `${targetProtocol}://${targetBePrefix}portal2.bankenverband.de`,
-              [`https://${sourceBePrefix}elsa.bankenverband.de`]: `${targetProtocol}://${targetBePrefix}elsa.bankenverband.de`,
-              [`https://${sourcePrefix}elsa.bankenverband.de`]: `${targetProtocol}://${targetPrefix}elsa.bankenverband.de`,
-              [`https://${sourcePrefix}portal2.bankenverband.de`]: `${targetProtocol}://${targetPrefix}portal2.bankenverband.de`,
-              
-              // **FIX**: Handle the HTTP link found in universal_login.html for 'Terms of use'
-              [`http://${sourcePrefix}portal2.bankenverband.de`]: `${targetProtocol}://${targetPrefix}portal2.bankenverband.de`,
-
-              // **FIX**: Handle hardcoded production favicon URL if the source is not prod
-              [`https://portal2.bankenverband.de`]: `${targetProtocol}://${targetPrefix}portal2.bankenverband.de`
-          };
-
-          const files = globSync(`${exportDir}/**/{actions,branding_templates}/**/*.{js,html}`);
-
-          if (files.length === 0) {
-              console.log("No files found in actions or branding_templates to process.");
-              return;
-          }
-
-          console.log(`Found ${files.length} files to process...`);
-
-          files.forEach(file => {
-              try {
-                  let content = fs.readFileSync(file, 'utf8');
-                  const originalContent = content;
-
-                  for (const [sourceUrl, targetUrl] of Object.entries(urlMappings)) {
-                      // Skip replacing the hardcoded prod URL if the source is already prod
-                      if (sourceUrl === 'https://portal2.bankenverband.de' && sourceEnv === 'prod') {
-                          continue;
-                      }
-
-                      const sourceUrlRegex = new RegExp(sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-                      content = content.replace(sourceUrlRegex, targetUrl);
-                  }
-
-                  if (content !== originalContent) {
-                      console.log(`Updated URLs in: ${file}`);
-                      fs.writeFileSync(file, content, 'utf8');
-                  }
-              } catch (err) {
-                  console.error(`Error processing file ${file}:`, err);
-                  process.exit(1);
-              }
-          });
-
-          console.log('URL replacement in files finished successfully.');
-          NODE_SCRIPT_EOF
-
-          node replace_urls_in_files.js
-          if [ $? -ne 0 ]; then
-            echo "Error: URL replacement script failed."
-            exit 1
-          fi
-        env:
-          SOURCE_ENV: ${{ github.event.inputs.source_environment }}
-          TARGET_ENV: ${{ github.event.inputs.target_environment }}
-          
       - name: Prepare Import Config File
         run: |
           TARGET_CONFIG_PATH="Auth0/config.json"
-
           if [ ! -f "$TARGET_CONFIG_PATH" ]; then
             echo "Error: Target config file $TARGET_CONFIG_PATH does not exist."
             exit 1
@@ -365,17 +299,17 @@ jobs:
             exit 1
           fi
           
+          # This step is now greatly simplified. All transformations are done.
+          # We just need to point the deploy tool to the target tenant.
           jq \
             --arg target_domain "$TARGET_DOMAIN_VALUE" \
             --arg target_client_id "$TARGET_CLIENT_ID_VALUE" \
             --arg target_client_secret "$TARGET_CLIENT_SECRET_VALUE" \
-            --argjson included_only '["actions", "clientGrants", "branding", "clients", "emailTemplates", "organizations", "pages", "prompts", "resourceServers", "roles", "tenant", "triggers"]' \
             '
             .AUTH0_DOMAIN = $target_domain |
             .AUTH0_CLIENT_ID = $target_client_id |
             .AUTH0_CLIENT_SECRET = $target_client_secret |
-            .AUTH0_ALLOW_DELETE = false |
-            .AUTH0_INCLUDED_ONLY = $included_only
+            .AUTH0_ALLOW_DELETE = false
             ' \
             "$TARGET_CONFIG_PATH" > temp_import_config.json
           
