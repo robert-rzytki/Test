@@ -1,4 +1,4 @@
-name: Auth0 Tenant Migration - TEST
+name: Auth0 - TEST
 
 on:
   workflow_dispatch:
