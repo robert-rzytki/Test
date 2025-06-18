@@ -153,7 +153,7 @@ jobs:
           const yaml = require('js-yaml');
 
           const tenantYamlPath = path.join('./auth0_export_source', 'tenant.yaml');
-          const outputTransformedTenantYamlPath = './transformed_tenant.yaml';
+          const outputTransformedTenantYamlPath = tenantYamlPath;
           const redirectSecretValue = process.env.REDIRECT_SECRET_VALUE;
           const sourceEnv = process.env.SOURCE_ENV;
           const targetEnv = process.env.TARGET_ENV;
@@ -325,13 +325,13 @@ jobs:
         if: github.event.inputs.perform_import_or_validation == 'validation'
         run: |
           echo "Performing dry-run validation for target: ${{ github.event.inputs.target_environment }}..."
-          a0deploy validate --config_file temp_import_config.json --input_file ./transformed_tenant.yaml
+          a0deploy validate --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml
 
       - name: Import to Target Environment
         if: github.event.inputs.perform_import_or_validation == 'import'
         run: |
           echo "Starting import to target environment: ${{ github.event.inputs.target_environment }}..."
-          a0deploy import --config_file temp_import_config.json --input_file ./transformed_tenant.yaml
+          a0deploy import --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml
 
       - name: Notify Import Completion
         if: github.event.inputs.perform_import_or_validation == 'import'
