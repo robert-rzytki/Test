@@ -1,0 +1,340 @@
+name: Auth0 Tenant Migration - TEST
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_environment:
+        description: 'Source Auth0 Tenant'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - preprod
+          - prod
+        default: dev
+      target_environment:
+        description: 'Target Auth0 Tenant'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - preprod
+          - prod
+        default: preprod
+      allow_delete:
+        description: 'Allow deletions in target tenant? (true/false)'
+        required: false
+        type: boolean
+        default: false
+      remove_localhost:
+        description: 'Remove localhost entries'
+        required: false
+        type: boolean
+        default: true
+      perform_import_or_validation:
+        description: 'Perform import or validation'
+        required: true
+        type: choice
+        options:
+          - import
+          - validation
+        default: validation
+
+jobs:
+  Perform_Auth0_Tenant_Migration:
+    runs-on: ubuntu-latest
+    outputs:
+      source_env_name: ${{ steps.prepare_env_names.outputs.source_env_name }}
+      target_env_name: ${{ steps.prepare_env_names.outputs.target_env_name }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Auth0 Deploy CLI, jq, and Node.js Dependencies
+        run: |
+          npm install -g auth0-deploy-cli
+          sudo apt-get update && sudo apt-get install -y jq
+          npm install js-yaml # Install js-yaml for Node.js script to handle YAML
+
+      - name: Prepare Environment Names
+        id: prepare_env_names
+        run: |
+          SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
+          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
+          echo "source_env_name_upper=$(echo "$SOURCE_ENV_NAME" | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+          echo "target_env_name_upper=$(echo "$TARGET_ENV_NAME" | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+          echo "source_env_name=$SOURCE_ENV_NAME" >> $GITHUB_OUTPUT
+          echo "target_env_name=$TARGET_ENV_NAME" >> $GITHUB_OUTPUT
+
+      - name: Extract Auth0 Actions Credentials for Target Environment
+        id: extract_auth0_actions_credentials
+        run: |
+          # Extract Auth0 Actions credentials from JSON secrets for target environment
+          TARGET_ENV="${{ github.event.inputs.target_environment }}"
+          
+          AUTH0_ACTIONS_DOMAINS='${{ secrets.AUTH0_ACTIONS_DOMAINS }}'
+          AUTH0_ACTIONS_CLIENT_IDS='${{ secrets.AUTH0_ACTIONS_CLIENT_IDS }}'
+          AUTH0_ACTIONS_CLIENT_SECRETS='${{ secrets.AUTH0_ACTIONS_CLIENT_SECRETS }}'
+          
+          # Extract values for target environment
+          AUTH0_ACTIONS_DOMAIN=$(echo "$AUTH0_ACTIONS_DOMAINS" | jq -r --arg env "$TARGET_ENV" '.[$env]')
+          AUTH0_ACTIONS_CLIENT_ID=$(echo "$AUTH0_ACTIONS_CLIENT_IDS" | jq -r --arg env "$TARGET_ENV" '.[$env]')
+          AUTH0_ACTIONS_CLIENT_SECRET=$(echo "$AUTH0_ACTIONS_CLIENT_SECRETS" | jq -r --arg env "$TARGET_ENV" '.[$env]')
+          
+          # Validate extraction
+          if [ "$AUTH0_ACTIONS_DOMAIN" = "null" ] || [ "$AUTH0_ACTIONS_CLIENT_ID" = "null" ] || [ "$AUTH0_ACTIONS_CLIENT_SECRET" = "null" ]; then
+            echo "Error: Could not extract Auth0 Actions credentials for environment: $TARGET_ENV"
+            exit 1
+          fi
+          
+          echo "Successfully extracted Auth0 Actions credentials for environment: $TARGET_ENV"
+          
+          # Set outputs (masked for security)
+          echo "::add-mask::$AUTH0_ACTIONS_DOMAIN"
+          echo "::add-mask::$AUTH0_ACTIONS_CLIENT_ID"
+          echo "::add-mask::$AUTH0_ACTIONS_CLIENT_SECRET"
+          echo "auth0_actions_domain=$AUTH0_ACTIONS_DOMAIN" >> $GITHUB_OUTPUT
+          echo "auth0_actions_client_id=$AUTH0_ACTIONS_CLIENT_ID" >> $GITHUB_OUTPUT
+          echo "auth0_actions_client_secret=$AUTH0_ACTIONS_CLIENT_SECRET" >> $GITHUB_OUTPUT
+
+      - name: Set Source Auth0 Credentials and Export
+        run: |
+          # Get source environment credentials from secrets
+          SOURCE_DOMAIN="${{ secrets[format('{0}_AUTH0_DOMAIN', env.source_env_name_upper)] }}"
+          SOURCE_CLIENT_ID="${{ secrets[format('{0}_AUTH0_CLIENT_ID', env.source_env_name_upper)] }}"
+          SOURCE_CLIENT_SECRET="${{ secrets[format('{0}_AUTH0_CLIENT_SECRET', env.source_env_name_upper)] }}"
+          
+          if [ -z "$SOURCE_DOMAIN" ] || [ -z "$SOURCE_CLIENT_ID" ] || [ -z "$SOURCE_CLIENT_SECRET" ]; then
+            echo "Error: Missing Auth0 credentials for source environment ${{ github.event.inputs.source_environment }}"
+            exit 1
+          fi
+          
+          SOURCE_CONFIG_PATH="Auth0/config.json"
+          
+          if [ ! -f "$SOURCE_CONFIG_PATH" ]; then
+            echo "Error: Config file $SOURCE_CONFIG_PATH does not exist."
+            exit 1
+          fi
+
+          # Create export config with credentials
+          jq \
+          --arg domain "$SOURCE_DOMAIN" \
+          --arg client_id "$SOURCE_CLIENT_ID" \
+          --arg client_secret "$SOURCE_CLIENT_SECRET" \
+          --argjson included_only '["actions", "clientGrants", "branding", "clients", "emailTemplates", "organizations", "pages", "prompts", "resourceServers", "roles", "tenant", "triggers"]' \
+          '.AUTH0_DOMAIN = $domain | .AUTH0_CLIENT_ID = $client_id | .AUTH0_CLIENT_SECRET = $client_secret | .AUTH0_ALLOW_DELETE = false | .AUTH0_INCLUDED_ONLY = $included_only' \
+          "$SOURCE_CONFIG_PATH" > temp_export_config.json
+
+          echo "Exporting from $SOURCE_DOMAIN..."
+          a0deploy export --config_file temp_export_config.json --format yaml --output_folder ./auth0_export_source
+
+      - name: Generate REDIRECT_SECRET
+        id: generate_redirect_secret
+        run: |
+          REDIRECT_SECRET=$(openssl rand -hex 32)
+          echo "::add-mask::$REDIRECT_SECRET"
+          echo "REDIRECT_SECRET=$REDIRECT_SECRET" >> $GITHUB_OUTPUT
+
+      - name: Transform tenant.yaml with secrets and keyword mappings
+        run: |
+          echo "Transforming tenant.yaml with secrets and keyword mappings..."
+          
+          cat <<'NODE_SCRIPT_EOF' > transform_script.js
+          const fs = require('fs');
+          const path = require('path');
+          const yaml = require('js-yaml');
+
+          const tenantYamlPath = path.join('./auth0_export_source', 'tenant.yaml');
+          const outputTransformedTenantYamlPath = tenantYamlPath;
+          const redirectSecretValue = process.env.REDIRECT_SECRET_VALUE;
+          const sourceEnv = process.env.SOURCE_ENV;
+          const targetEnv = process.env.TARGET_ENV;
+          const removeLocalhost = process.env.REMOVE_LOCALHOST === 'true';
+          
+          // Auth0 Actions credentials for target environment
+          const auth0ActionsDomain = process.env.AUTH0_ACTIONS_DOMAIN;
+          const auth0ActionsClientId = process.env.AUTH0_ACTIONS_CLIENT_ID;
+          const auth0ActionsClientSecret = process.env.AUTH0_ACTIONS_CLIENT_SECRET;
+
+          if (!fs.existsSync(tenantYamlPath)) {
+            console.error('Error: Source tenant.yaml not found at: ' + tenantYamlPath);
+            process.exit(1);
+          }
+
+          let tenantYamlContent = fs.readFileSync(tenantYamlPath, 'utf8');
+          let tenantConfig = yaml.load(tenantYamlContent);
+
+          function removeLocalhostFromArray(arr) {
+            if (!Array.isArray(arr)) return arr;
+            return arr.filter(item => typeof item !== 'string' || (!item.includes('localhost') && !item.includes('127.0.0.1')));
+          }
+
+          function removeLocalhostFromObject(obj) {
+            if (Array.isArray(obj)) {
+              return removeLocalhostFromArray(obj);
+            } else if (typeof obj === 'object' && obj !== null) {
+              const result = {};
+              for (const [key, value] of Object.entries(obj)) {
+                if (key === 'callbacks' || key === 'allowed_origins' || key === 'web_origins' || key === 'allowed_logout_urls') {
+                  result[key] = removeLocalhostFromArray(value);
+                } else {
+                  result[key] = removeLocalhostFromObject(value);
+                }
+              }
+              return result;
+            }
+            return obj;
+          }
+
+          if (removeLocalhost) {
+            console.log('Removing localhost entries...');
+            tenantConfig = removeLocalhostFromObject(tenantConfig);
+          }
+
+          function injectAuth0ActionsSecrets(action) {
+            if (!action.secrets) action.secrets = [];
+            const secretMappings = {
+              'a0Domain': auth0ActionsDomain,
+              'a0ActionsClientId': auth0ActionsClientId,
+              'a0ActionsClientSecret': auth0ActionsClientSecret
+            };
+            for (const [name, value] of Object.entries(secretMappings)) {
+              const existing = action.secrets.find(s => s.name === name);
+              if (existing) existing.value = value;
+            }
+          }
+          
+          if (tenantConfig && tenantConfig.actions) {
+            tenantConfig.actions.forEach(action => injectAuth0ActionsSecrets(action));
+          }
+
+          if (tenantConfig && tenantConfig.actions) {
+            const actionsToUpdate = ['[Guard] Terms of use ', '[MFA] Email OTP'];
+            actionsToUpdate.forEach(actionName => {
+              const targetAction = tenantConfig.actions.find(action => action.name === actionName);
+              if (targetAction) {
+                if (!targetAction.secrets) targetAction.secrets = [];
+                const secret = targetAction.secrets.find(s => s.name === 'REDIRECT_SECRET');
+                if (secret) secret.value = redirectSecretValue;
+                else targetAction.secrets.push({ name: 'REDIRECT_SECRET', value: redirectSecretValue });
+              }
+            });
+          }
+
+          tenantYamlContent = yaml.dump(tenantConfig, { lineWidth: -1, noRefs: true });
+          fs.writeFileSync(outputTransformedTenantYamlPath, tenantYamlContent, 'utf8');
+          console.log('Transformed tenant.yaml saved to: ' + outputTransformedTenantYamlPath);
+          NODE_SCRIPT_EOF
+
+          node transform_script.js
+          if [ $? -ne 0 ]; then
+            echo "Error: Node.js transformation script failed."
+            exit 1
+          fi
+        env:
+          REDIRECT_SECRET_VALUE: ${{ steps.generate_redirect_secret.outputs.REDIRECT_SECRET }}
+          SOURCE_ENV: ${{ github.event.inputs.source_environment }}
+          TARGET_ENV: ${{ github.event.inputs.target_environment }}
+          REMOVE_LOCALHOST: ${{ github.event.inputs.remove_localhost }}
+          AUTH0_ACTIONS_DOMAIN: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_domain }}
+          AUTH0_ACTIONS_CLIENT_ID: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_id }}
+          AUTH0_ACTIONS_CLIENT_SECRET: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_secret }}
+
+      - name: Prepare Import Config File
+        run: |
+          TARGET_CONFIG_PATH="Auth0/config.json"
+
+          if [ ! -f "$TARGET_CONFIG_PATH" ]; then
+            echo "Error: Target config file $TARGET_CONFIG_PATH does not exist."
+            exit 1
+          fi
+
+          TARGET_DOMAIN_VALUE="${{ secrets[format('{0}_AUTH0_DOMAIN', env.target_env_name_upper)] }}"
+          TARGET_CLIENT_ID_VALUE="${{ secrets[format('{0}_AUTH0_CLIENT_ID', env.target_env_name_upper)] }}"
+          TARGET_CLIENT_SECRET_VALUE="${{ secrets[format('{0}_AUTH0_CLIENT_SECRET', env.target_env_name_upper)] }}"
+          
+          if [ -z "$TARGET_DOMAIN_VALUE" ] || [ -z "$TARGET_CLIENT_ID_VALUE" ] || [ -z "$TARGET_CLIENT_SECRET_VALUE" ]; then
+            echo "Error: Missing Auth0 credentials for target environment ${{ github.event.inputs.target_environment }}"
+            exit 1
+          fi
+          
+          SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
+          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
+          ALLOW_DELETE_VALUE="${{ github.event.inputs.allow_delete }}"
+
+          SOURCE_PREFIX_DOT="$SOURCE_ENV_NAME."
+          SOURCE_PREFIX_BE="be$SOURCE_ENV_NAME."
+          
+          if [ "$TARGET_ENV_NAME" = "prod" ]; then
+            TARGET_PREFIX_DOT="" 
+            TARGET_PREFIX_BE="be." 
+            TARGET_AUTH0_API_ENV_PART="prod" 
+          else
+            TARGET_PREFIX_DOT="$TARGET_ENV_NAME."
+            TARGET_PREFIX_BE="be$TARGET_ENV_NAME."
+            TARGET_AUTH0_API_ENV_PART="$TARGET_ENV_NAME" 
+          fi
+
+          SOURCE_AUTH0_API_ENV_PART="$SOURCE_ENV_NAME"
+          if [ "$SOURCE_ENV_NAME" = "stage" ]; then
+            SOURCE_AUTH0_API_ENV_PART="staging" 
+          fi
+          
+          jq \
+            --arg target_domain "$TARGET_DOMAIN_VALUE" \
+            --arg target_client_id "$TARGET_CLIENT_ID_VALUE" \
+            --arg target_client_secret "$TARGET_CLIENT_SECRET_VALUE" \
+            --argjson allow_delete "$ALLOW_DELETE_VALUE" \
+            --argjson included_only '["actions", "clientGrants", "branding", "clients", "emailTemplates", "organizations", "pages", "prompts", "resourceServers", "roles", "tenant", "triggers"]' \
+            --arg source_prefix_dot "$SOURCE_PREFIX_DOT" \
+            --arg source_prefix_be "$SOURCE_PREFIX_BE" \
+            --arg target_prefix_dot "$TARGET_PREFIX_DOT" \
+            --arg target_prefix_be "$TARGET_PREFIX_BE" \
+            --arg source_auth0_api_env_part "$SOURCE_AUTH0_API_ENV_PART" \
+            --arg target_auth0_api_env_part "$TARGET_AUTH0_API_ENV_PART" \
+            '
+            .AUTH0_DOMAIN = $target_domain |
+            .AUTH0_CLIENT_ID = $target_client_id |
+            .AUTH0_CLIENT_SECRET = $target_client_secret |
+            .AUTH0_ALLOW_DELETE = $allow_delete |
+            .AUTH0_INCLUDED_ONLY = $included_only |
+            .AUTH0_KEYWORD_REPLACE_MAPPINGS = {
+              ("https://" + $source_prefix_dot + "documentgenerator.bankenverband.de/"): ("https://" + $target_prefix_dot + "documentgenerator.bankenverband.de/"),
+              ("https://" + $source_prefix_dot + "usermanagement.bankenverband.de/"): ("https://" + $target_prefix_dot + "usermanagement.bankenverband.de/"),
+              ("https://" + $source_prefix_be + "portal2.bankenverband.de/"): ("https://" + $target_prefix_be + "portal2.bankenverband.de/"),
+              ("https://" + $source_prefix_be + "elsa.bankenverband.de/"): ("https://" + $target_prefix_be + "elsa.bankenverband.de/"),
+              ("https://" + $source_prefix_dot + "elsa.bankenverband.de"): ("https://" + $target_prefix_dot + "elsa.bankenverband.de"), 
+              ("https://" + $source_prefix_dot + "portal2.bankenverband.de"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de"),
+              ("https://bdb" + $source_auth0_api_env_part + ".eu.auth0.com/api/v2/"): ("https://bdb" + "experimental" + ".eu.auth0.com/api/v2/"),
+              ("https://dev.portal2.bankenverband.de/assets/logo.svg"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de/assets/logo.svg")
+            }
+            ' \
+            "$TARGET_CONFIG_PATH" > temp_import_config.json
+          
+          echo "Generated import config for ${{ github.event.inputs.target_environment }}"
+          
+      - name: Dry-Run Validation
+        if: github.event.inputs.perform_import_or_validation == 'validation'
+        run: |
+          echo "Performing dry-run validation for target: ${{ github.event.inputs.target_environment }}..."
+          a0deploy validate --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml
+
+      - name: Import to Target Environment
+        if: github.event.inputs.perform_import_or_validation == 'import'
+        run: |
+          echo "Starting import to target environment: ${{ github.event.inputs.target_environment }}..."
+          a0deploy import --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml
+
+      - name: Notify Import Completion
+        if: github.event.inputs.perform_import_or_validation == 'import'
+        run: |
+          echo "🎉 Auth0 tenant import to ${{ github.event.inputs.target_environment }} has successfully completed!"
+          echo "Please review the workflow run logs for details."
