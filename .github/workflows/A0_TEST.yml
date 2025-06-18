@@ -23,6 +23,11 @@ on:
           - preprod
           - prod
         default: prod
+      allow_delete:
+        description: 'Allow deletions in target tenant? (true/false)'
+        required: true
+        type: boolean
+        default: false
       remove_localhost:
         description: 'Remove localhost entries'
         required: false
@@ -38,7 +43,7 @@ on:
         default: validation
 
 jobs:
-  Perform_Auth0_Tenant_Migration:
+  Performing_Tenant_Migration:
     runs-on: ubuntu-latest
     outputs:
       source_env_name: ${{ steps.prepare_env_names.outputs.source_env_name }}
@@ -56,8 +61,8 @@ jobs:
       - name: Install Auth0 Deploy CLI, jq, and Node.js Dependencies
         run: |
           npm install -g auth0-deploy-cli
-          sudo apt-get update && sudo apt-get install -y jq
-          npm install js-yaml glob # Install js-yaml for YAML handling and glob for file searching
+          sudo apt update && sudo apt install -y jq
+          npm install js-yaml glob
 
       - name: Prepare Environment Names
         id: prepare_env_names
@@ -105,7 +110,6 @@ jobs:
           fi
           
           SOURCE_CONFIG_PATH="Auth0/config.json"
-          
           if [ ! -f "$SOURCE_CONFIG_PATH" ]; then
             echo "Error: Config file $SOURCE_CONFIG_PATH does not exist."
             exit 1
@@ -115,8 +119,7 @@ jobs:
           --arg domain "$SOURCE_DOMAIN" \
           --arg client_id "$SOURCE_CLIENT_ID" \
           --arg client_secret "$SOURCE_CLIENT_SECRET" \
-          --argjson included_only '["actions", "clientGrants", "branding", "clients", "emailTemplates", "organizations", "pages", "prompts", "resourceServers", "roles", "tenant", "triggers"]' \
-          '.AUTH0_DOMAIN = $domain | .AUTH0_CLIENT_ID = $client_id | .AUTH0_CLIENT_SECRET = $client_secret | .AUTH0_ALLOW_DELETE = false | .AUTH0_INCLUDED_ONLY = $included_only' \
+          '.AUTH0_DOMAIN = $domain | .AUTH0_CLIENT_ID = $client_id | .AUTH0_CLIENT_SECRET = $client_secret | .AUTH0_ALLOW_DELETE = false' \
           "$SOURCE_CONFIG_PATH" > temp_export_config.json
 
           echo "Exporting from $SOURCE_DOMAIN..."
@@ -129,10 +132,11 @@ jobs:
           echo "::add-mask::$REDIRECT_SECRET"
           echo "REDIRECT_SECRET=$REDIRECT_SECRET" >> $GITHUB_OUTPUT
 
-      - name: Transform Tenant Config and Replace URLs
+      - name: Transform Config Files (Secrets, Localhost, URLs)
         run: |
-          echo "Starting full transformation of exported Auth0 configuration..."
-          cat <<'NODE_SCRIPT_EOF' > full_transform_script.js
+          echo "Transforming configuration files..."
+          
+          cat <<'NODE_SCRIPT_EOF' > transform_script.js
           const fs = require('fs');
           const path = require('path');
           const yaml = require('js-yaml');
@@ -141,138 +145,99 @@ jobs:
           // --- Environment and Secret Variables ---
           const sourceEnv = process.env.SOURCE_ENV;
           const targetEnv = process.env.TARGET_ENV;
+          const exportDir = './auth0_export_source';
           const redirectSecretValue = process.env.REDIRECT_SECRET_VALUE;
           const removeLocalhost = process.env.REMOVE_LOCALHOST === 'true';
           const auth0ActionsDomain = process.env.AUTH0_ACTIONS_DOMAIN;
           const auth0ActionsClientId = process.env.AUTH0_ACTIONS_CLIENT_ID;
           const auth0ActionsClientSecret = process.env.AUTH0_ACTIONS_CLIENT_SECRET;
-          const exportDir = './auth0_export_source';
 
-          console.log(`Starting transformation for migration from '${sourceEnv}' to '${targetEnv}'.`);
+          // --- 1. YAML-specific transformations on tenant.yaml ---
+          const tenantYamlPath = path.join(exportDir, 'tenant.yaml');
+          if (fs.existsSync(tenantYamlPath)) {
+              console.log('Transforming tenant.yaml...');
+              let tenantConfig = yaml.load(fs.readFileSync(tenantYamlPath, 'utf8'));
 
-          // --- Helper Functions for URL/Identifier Construction ---
+              // ** CORRECTED Localhost Removal Logic **
+              if (removeLocalhost) {
+                  console.log('Removing localhost entries...');
+
+                  // This recursive function correctly traverses nested objects and arrays.
+                  function traverseAndModify(obj) {
+                      // If it's an array, map over its elements and apply recursion
+                      if (Array.isArray(obj)) {
+                          return obj.map(item => traverseAndModify(item));
+                      }
+                      // If it's an object, iterate over its keys
+                      if (typeof obj === 'object' && obj !== null) {
+                          const newObj = {};
+                          for (const key in obj) {
+                              // If the key is one we need to clean, filter its array value
+                              if (['callbacks', 'allowed_origins', 'web_origins', 'allowed_logout_urls'].includes(key) && Array.isArray(obj[key])) {
+                                  newObj[key] = obj[key].filter(item => typeof item !== 'string' || (!item.includes('localhost') && !item.includes('127.0.0.1')));
+                              } else {
+                                  // Otherwise, just apply recursion to the value
+                                  newObj[key] = traverseAndModify(obj[key]);
+                              }
+                          }
+                          return newObj;
+                      }
+                      // Return primitives (strings, numbers, etc.) as they are
+                      return obj;
+                  }
+                  tenantConfig = traverseAndModify(tenantConfig);
+              }
+              
+              // Inject secrets into actions
+              if (tenantConfig.actions) {
+                  console.log('Injecting secrets...');
+                  tenantConfig.actions.forEach(action => {
+                      if (!action.secrets) action.secrets = [];
+                      const secretMappings = {
+                          'a0Domain': auth0ActionsDomain,
+                          'a0ActionsClientId': auth0ActionsClientId,
+                          'a0ActionsClientSecret': auth0ActionsClientSecret
+                      };
+                      for (const [name, value] of Object.entries(secretMappings)) {
+                          const existing = action.secrets.find(s => s.name === name);
+                          if (existing) existing.value = value;
+                      }
+                      if (['[Guard] Terms of use ', '[MFA] Email OTP'].includes(action.name)) {
+                           const secret = action.secrets.find(s => s.name === 'REDIRECT_SECRET');
+                           if (secret) secret.value = redirectSecretValue;
+                           else action.secrets.push({ name: 'REDIRECT_SECRET', value: redirectSecretValue });
+                      }
+                  });
+              }
+              fs.writeFileSync(tenantYamlPath, yaml.dump(tenantConfig, { lineWidth: -1, noRefs: true }), 'utf8');
+              console.log('tenant.yaml transformation complete.');
+          }
+
+          // --- 2. URL replacements in non-YAML files (Actions, Branding) ---
+          console.log('Replacing URLs in JS and HTML files...');
           const getPrefix = (env) => (env === 'prod' ? '' : `${env}.`);
-          const getBePrefix = (env) => (env === 'prod' ? 'be.' : `be${env}.`);
-          const getApiEnvPart = (env) => (env === 'stage' ? 'staging' : env);
-
-          // --- Construct URL Mappings ---
-          const sourcePrefixDot = getPrefix(sourceEnv);
-          const targetPrefixDot = getPrefix(targetEnv);
-          const sourcePrefixBe = getBePrefix(sourceEnv);
-          const targetPrefixBe = getBePrefix(targetEnv);
-          const sourceAuth0ApiEnvPart = getApiEnvPart(sourceEnv);
-          const targetAuth0ApiEnvPart = getApiEnvPart(targetEnv);
-
           const urlMappings = {
-            [`https://${sourcePrefixDot}documentgenerator.bankenverband.de/`]: `https://${targetPrefixDot}documentgenerator.bankenverband.de/`,
-            [`https://${sourcePrefixDot}usermanagement.bankenverband.de/`]: `https://${targetPrefixDot}usermanagement.bankenverband.de/`,
-            [`https://${sourcePrefixBe}portal2.bankenverband.de/`]: `https://${targetPrefixBe}portal2.bankenverband.de/`,
-            [`https://${sourcePrefixBe}elsa.bankenverband.de/`]: `https://${targetPrefixBe}elsa.bankenverband.de/`,
-            [`https://${sourcePrefixDot}elsa.bankenverband.de`]: `https://${targetPrefixDot}elsa.bankenverband.de`,
-            [`https://${sourcePrefixDot}portal2.bankenverband.de`]: `https://${targetPrefixDot}portal2.bankenverband.de`,
-            [`http://${sourcePrefixDot}portal2.bankenverband.de`]: `https://${targetPrefixDot}portal2.bankenverband.de`, // Handle insecure http
-            [`https://bdb${sourceAuth0ApiEnvPart}.eu.auth0.com/api/v2/`]: `https://bdb${targetAuth0ApiEnvPart}.eu.auth0.com/api/v2/`,
-            [`https://dev.portal2.bankenverband.de/assets/logo.svg`]: `https://${targetPrefixDot}portal2.bankenverband.de/assets/logo.svg`,
-            // Handle hardcoded production favicon URL if the source is not prod
-            ...(sourceEnv !== 'prod' && { [`https://portal2.bankenverband.de`]: `https://${targetPrefixDot}portal2.bankenverband.de` })
+            // Note: Keep identifier URLs for keyword mapping. Only replace other URLs here.
+            [`https://${getPrefix(sourceEnv)}portal2.bankenverband.de`]: `https://${getPrefix(targetEnv)}portal2.bankenverband.de`,
+            [`http://${getPrefix(sourceEnv)}portal2.bankenverband.de`]: `https://${getPrefix(targetEnv)}portal2.bankenverband.de`,
           };
           
-          console.log("Constructed URL Mappings:", urlMappings);
-
-          // --- File-based Transformations ---
-          // Process all relevant files for string replacement.
-          const filesToProcess = globSync(`${exportDir}/**/*.{js,html,yaml}`);
-          if (filesToProcess.length === 0) {
-              console.warn("Warning: No files found to process for URL replacements.");
-          } else {
-              console.log(`Found ${filesToProcess.length} files to process for URL replacement...`);
-              filesToProcess.forEach(file => {
-                  try {
-                      let content = fs.readFileSync(file, 'utf8');
-                      const originalContent = content;
-                      for (const [sourceUrl, targetUrl] of Object.entries(urlMappings)) {
-                          // Use a global regex for replacement
-                          const sourceUrlRegex = new RegExp(sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-                          content = content.replace(sourceUrlRegex, targetUrl);
-                      }
-                      if (content !== originalContent) {
-                          console.log(`Updated URLs in: ${file}`);
-                          fs.writeFileSync(file, content, 'utf8');
-                      }
-                  } catch (err) {
-                      console.error(`Error processing file ${file}:`, err);
-                      process.exit(1);
-                  }
-              });
-          }
-
-          // --- YAML-specific Transformations (tenant.yaml) ---
-          const tenantYamlPath = path.join(exportDir, 'tenant.yaml');
-          if (!fs.existsSync(tenantYamlPath)) {
-              console.warn(`Warning: tenant.yaml not found at: ${tenantYamlPath}. Skipping YAML-specific transformations.`);
-              return;
-          }
-
-          console.log('Performing YAML-specific transformations on tenant.yaml...');
-          let tenantConfig = yaml.load(fs.readFileSync(tenantYamlPath, 'utf8'));
-
-          // 1. Remove Localhost
-          function removeLocalhostFromArray(arr) {
-              if (!Array.isArray(arr)) return arr;
-              return arr.filter(item => typeof item !== 'string' || (!item.includes('localhost') && !item.includes('127.0.0.1')));
-          }
-          function traverseAndRemoveLocalhost(obj) {
-              if (Array.isArray(obj)) {
-                  return removeLocalhostFromArray(obj);
-              } else if (typeof obj === 'object' && obj !== null) {
-                  for (const key in obj) {
-                      if (['callbacks', 'allowed_origins', 'web_origins', 'allowed_logout_urls'].includes(key)) {
-                          obj[key] = removeLocalhostFromArray(obj[key]);
-                      } else {
-                          obj[key] = traverseAndRemoveLocalhost(obj[key]);
-                      }
-                  }
+          const files = globSync(`${exportDir}/**/{actions,branding_templates}/**/*.{js,html}`);
+          files.forEach(file => {
+              let content = fs.readFileSync(file, 'utf8');
+              const originalContent = content;
+              for (const [sourceUrl, targetUrl] of Object.entries(urlMappings)) {
+                  content = content.replace(new RegExp(sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), targetUrl);
               }
-              return obj;
-          }
-          if (removeLocalhost) {
-              console.log('Removing localhost entries from tenant.yaml...');
-              tenantConfig = traverseAndRemoveLocalhost(tenantConfig);
-          }
-
-          // 2. Inject Secrets
-          if (tenantConfig?.actions) {
-              console.log('Injecting secrets into actions...');
-              tenantConfig.actions.forEach(action => {
-                  if (!action.secrets) action.secrets = [];
-                  const secretMappings = {
-                      'a0Domain': auth0ActionsDomain,
-                      'a0ActionsClientId': auth0ActionsClientId,
-                      'a0ActionsClientSecret': auth0ActionsClientSecret
-                  };
-                  for (const [name, value] of Object.entries(secretMappings)) {
-                      const existing = action.secrets.find(s => s.name === name);
-                      if (existing) existing.value = value;
-                  }
-                  
-                  if (['[Guard] Terms of use ', '[MFA] Email OTP'].includes(action.name)) {
-                      const secret = action.secrets.find(s => s.name === 'REDIRECT_SECRET');
-                      if (secret) secret.value = redirectSecretValue;
-                      else action.secrets.push({ name: 'REDIRECT_SECRET', value: redirectSecretValue });
-                  }
-              });
-          }
-
-          // Save the transformed tenant.yaml
-          fs.writeFileSync(tenantYamlPath, yaml.dump(tenantConfig, { lineWidth: -1, noRefs: true }), 'utf8');
-          console.log('YAML-specific transformations complete. Transformed tenant.yaml saved.');
+              if (content !== originalContent) {
+                  console.log(`Updated URLs in: ${file}`);
+                  fs.writeFileSync(file, content, 'utf8');
+              }
+          });
+          console.log('URL replacement script finished.');
           NODE_SCRIPT_EOF
 
-          node full_transform_script.js
-          if [ $? -ne 0 ]; then
-            echo "Error: Node.js transformation script failed."
-            exit 1
-          fi
+          node transform_script.js
         env:
           REDIRECT_SECRET_VALUE: ${{ steps.generate_redirect_secret.outputs.REDIRECT_SECRET }}
           SOURCE_ENV: ${{ github.event.inputs.source_environment }}
@@ -282,7 +247,7 @@ jobs:
           AUTH0_ACTIONS_CLIENT_ID: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_id }}
           AUTH0_ACTIONS_CLIENT_SECRET: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_secret }}
 
-      - name: Prepare Import Config File
+      - name: Prepare Import Config File (with Keyword Mapping)
         run: |
           TARGET_CONFIG_PATH="Auth0/config.json"
           if [ ! -f "$TARGET_CONFIG_PATH" ]; then
@@ -299,21 +264,56 @@ jobs:
             exit 1
           fi
           
-          # This step is now greatly simplified. All transformations are done.
-          # We just need to point the deploy tool to the target tenant.
+          # Dynamically build prefixes and API parts for keyword mapping
+          SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
+          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
+          ALLOW_DELETE_VALUE="${{ github.event.inputs.allow_delete }}"
+
+          SOURCE_PREFIX_DOT="$SOURCE_ENV_NAME."
+          TARGET_PREFIX_DOT="$TARGET_ENV_NAME."
+          if [ "$SOURCE_ENV_NAME" = "prod" ]; then SOURCE_PREFIX_DOT=""; fi
+          if [ "$TARGET_ENV_NAME" = "prod" ]; then TARGET_PREFIX_DOT=""; fi
+          
+          SOURCE_PREFIX_BE="be$SOURCE_ENV_NAME."
+          TARGET_PREFIX_BE="be$TARGET_ENV_NAME."
+          if [ "$SOURCE_ENV_NAME" = "prod" ]; then SOURCE_PREFIX_BE="be."; fi
+          if [ "$TARGET_ENV_NAME" = "prod" ]; then TARGET_PREFIX_BE="be."; fi
+
+          SOURCE_AUTH0_API_ENV_PART="$SOURCE_ENV_NAME"
+          if [ "$SOURCE_ENV_NAME" = "stage" ]; then SOURCE_AUTH0_API_ENV_PART="staging"; fi
+          TARGET_AUTH0_API_ENV_PART="$TARGET_ENV_NAME"
+          if [ "$TARGET_ENV_NAME" = "stage" ]; then TARGET_AUTH0_API_ENV_PART="staging"; fi
+          
           jq \
             --arg target_domain "$TARGET_DOMAIN_VALUE" \
             --arg target_client_id "$TARGET_CLIENT_ID_VALUE" \
             --arg target_client_secret "$TARGET_CLIENT_SECRET_VALUE" \
+            --argjson allow_delete "$ALLOW_DELETE_VALUE" \
+            --arg source_prefix_dot "$SOURCE_PREFIX_DOT" \
+            --arg target_prefix_dot "$TARGET_PREFIX_DOT" \
+            --arg source_prefix_be "$SOURCE_PREFIX_BE" \
+            --arg target_prefix_be "$TARGET_PREFIX_BE" \
+            --arg source_auth0_api_env_part "$SOURCE_AUTH0_API_ENV_PART" \
+            --arg target_auth0_api_env_part "$TARGET_AUTH0_API_ENV_PART" \
             '
             .AUTH0_DOMAIN = $target_domain |
             .AUTH0_CLIENT_ID = $target_client_id |
             .AUTH0_CLIENT_SECRET = $target_client_secret |
-            .AUTH0_ALLOW_DELETE = true
+            .AUTH0_ALLOW_DELETE = $allow_delete |
+            .AUTH0_KEYWORD_REPLACE_MAPPINGS = {
+              ("https://bdb" + $source_auth0_api_env_part + ".eu.auth0.com/api/v2/"): ("https://bdb" + $target_auth0_api_env_part + ".eu.auth0.com/api/v2/"),
+              ("https://" + $source_prefix_dot + "documentgenerator.bankenverband.de/"): ("https://" + $target_prefix_dot + "documentgenerator.bankenverband.de/"),
+              ("https://" + $source_prefix_dot + "usermanagement.bankenverband.de/"): ("https://" + $target_prefix_dot + "usermanagement.bankenverband.de/"),
+              ("https://_." + $source_prefix_be + "portal2.bankenverband.de/"): ("https://" + $target_prefix_be + "portal2.bankenverband.de/"),
+              ("https://" + $source_prefix_be + "elsa.bankenverband.de/"): ("https://" + $target_prefix_be + "elsa.bankenverband.de/"),
+              ("https://" + $source_prefix_dot + "elsa.bankenverband.de"): ("https://" + $target_prefix_dot + "elsa.bankenverband.de"), 
+              ("https://" + $source_prefix_dot + "portal2.bankenverband.de"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de"),
+              ("https://dev.portal2.bankenverband.de/assets/logo.svg"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de/assets/logo.svg")
+            }
             ' \
             "$TARGET_CONFIG_PATH" > temp_import_config.json
           
-          echo "Generated import config for ${{ github.event.inputs.target_environment }}"
+          echo "Generated import config for ${{ github.event.inputs.target_environment }} with keyword mappings."
           
       - name: Dry-Run Validation
         if: github.event.inputs.perform_import_or_validation == 'validation'
