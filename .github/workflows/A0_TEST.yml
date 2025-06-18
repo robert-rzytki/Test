@@ -22,7 +22,7 @@ on:
           - stage
           - preprod
           - prod
-        default: stage
+        default: prod
       remove_localhost:
         description: 'Remove localhost entries'
         required: false
