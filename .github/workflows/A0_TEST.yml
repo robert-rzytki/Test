@@ -43,7 +43,7 @@ on:
         default: validation
 
 jobs:
-  Performing_Tenant_Migration:
+  Perform_Auth0_Tenant_Migration:
     runs-on: ubuntu-latest
     outputs:
       source_env_name: ${{ steps.prepare_env_names.outputs.source_env_name }}
@@ -61,7 +61,7 @@ jobs:
       - name: Install Auth0 Deploy CLI, jq, and Node.js Dependencies
         run: |
           npm install -g auth0-deploy-cli
-          sudo apt update && sudo apt install -y jq
+          sudo apt-get update && sudo apt-get install -y jq
           npm install js-yaml glob
 
       - name: Prepare Environment Names
@@ -142,7 +142,6 @@ jobs:
           const yaml = require('js-yaml');
           const { globSync } = require('glob');
 
-          // --- Environment and Secret Variables ---
           const sourceEnv = process.env.SOURCE_ENV;
           const targetEnv = process.env.TARGET_ENV;
           const exportDir = './auth0_export_source';
@@ -152,43 +151,33 @@ jobs:
           const auth0ActionsClientId = process.env.AUTH0_ACTIONS_CLIENT_ID;
           const auth0ActionsClientSecret = process.env.AUTH0_ACTIONS_CLIENT_SECRET;
 
-          // --- 1. YAML-specific transformations on tenant.yaml ---
           const tenantYamlPath = path.join(exportDir, 'tenant.yaml');
           if (fs.existsSync(tenantYamlPath)) {
               console.log('Transforming tenant.yaml...');
               let tenantConfig = yaml.load(fs.readFileSync(tenantYamlPath, 'utf8'));
 
-              // ** CORRECTED Localhost Removal Logic **
               if (removeLocalhost) {
                   console.log('Removing localhost entries...');
-
-                  // This recursive function correctly traverses nested objects and arrays.
                   function traverseAndModify(obj) {
-                      // If it's an array, map over its elements and apply recursion
                       if (Array.isArray(obj)) {
                           return obj.map(item => traverseAndModify(item));
                       }
-                      // If it's an object, iterate over its keys
                       if (typeof obj === 'object' && obj !== null) {
                           const newObj = {};
                           for (const key in obj) {
-                              // If the key is one we need to clean, filter its array value
                               if (['callbacks', 'allowed_origins', 'web_origins', 'allowed_logout_urls'].includes(key) && Array.isArray(obj[key])) {
                                   newObj[key] = obj[key].filter(item => typeof item !== 'string' || (!item.includes('localhost') && !item.includes('127.0.0.1')));
                               } else {
-                                  // Otherwise, just apply recursion to the value
                                   newObj[key] = traverseAndModify(obj[key]);
                               }
                           }
                           return newObj;
                       }
-                      // Return primitives (strings, numbers, etc.) as they are
                       return obj;
                   }
                   tenantConfig = traverseAndModify(tenantConfig);
               }
               
-              // Inject secrets into actions
               if (tenantConfig.actions) {
                   console.log('Injecting secrets...');
                   tenantConfig.actions.forEach(action => {
@@ -213,11 +202,9 @@ jobs:
               console.log('tenant.yaml transformation complete.');
           }
 
-          // --- 2. URL replacements in non-YAML files (Actions, Branding) ---
           console.log('Replacing URLs in JS and HTML files...');
           const getPrefix = (env) => (env === 'prod' ? '' : `${env}.`);
           const urlMappings = {
-            // Note: Keep identifier URLs for keyword mapping. Only replace other URLs here.
             [`https://${getPrefix(sourceEnv)}portal2.bankenverband.de`]: `https://${getPrefix(targetEnv)}portal2.bankenverband.de`,
             [`http://${getPrefix(sourceEnv)}portal2.bankenverband.de`]: `https://${getPrefix(targetEnv)}portal2.bankenverband.de`,
           };
@@ -264,7 +251,6 @@ jobs:
             exit 1
           fi
           
-          # Dynamically build prefixes and API parts for keyword mapping
           SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
           TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
           ALLOW_DELETE_VALUE="${{ github.event.inputs.allow_delete }}"
@@ -304,7 +290,7 @@ jobs:
               ("https://bdb" + $source_auth0_api_env_part + ".eu.auth0.com/api/v2/"): ("https://bdb" + $target_auth0_api_env_part + ".eu.auth0.com/api/v2/"),
               ("https://" + $source_prefix_dot + "documentgenerator.bankenverband.de/"): ("https://" + $target_prefix_dot + "documentgenerator.bankenverband.de/"),
               ("https://" + $source_prefix_dot + "usermanagement.bankenverband.de/"): ("https://" + $target_prefix_dot + "usermanagement.bankenverband.de/"),
-              ("https://_." + $source_prefix_be + "portal2.bankenverband.de/"): ("https://" + $target_prefix_be + "portal2.bankenverband.de/"),
+              ("https://" + $source_prefix_be + "portal2.bankenverband.de/"): ("https://" + $target_prefix_be + "portal2.bankenverband.de/"),
               ("https://" + $source_prefix_be + "elsa.bankenverband.de/"): ("https://" + $target_prefix_be + "elsa.bankenverband.de/"),
               ("https://" + $source_prefix_dot + "elsa.bankenverband.de"): ("https://" + $target_prefix_dot + "elsa.bankenverband.de"), 
               ("https://" + $source_prefix_dot + "portal2.bankenverband.de"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de"),
