@@ -250,7 +250,7 @@ jobs:
 
       - name: Prepare Import Config File
         run: |
-          TARGET_CONFIG_PATH="Auth0/${{ github.event.inputs.target_environment }}/config.json"
+          TARGET_CONFIG_PATH="Auth0/config.json"
 
           if [ ! -f "$TARGET_CONFIG_PATH" ]; then
             echo "Error: Target config file $TARGET_CONFIG_PATH does not exist."
