@@ -1,4 +1,4 @@
-name: Auth0 - TEST
+name: Auth0 Tenant Migration
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ on:
           - stage
           - preprod
           - prod
-        default: preprod
+        default: stage
       allow_delete:
         description: 'Allow deletions in target tenant? (true/false)'
         required: false
@@ -62,7 +62,7 @@ jobs:
         run: |
           npm install -g auth0-deploy-cli
           sudo apt-get update && sudo apt-get install -y jq
-          npm install js-yaml # Install js-yaml for Node.js script to handle YAML
+          npm install js-yaml glob # Install js-yaml for YAML handling and glob for file searching
 
       - name: Prepare Environment Names
         id: prepare_env_names
@@ -143,9 +143,9 @@ jobs:
           echo "::add-mask::$REDIRECT_SECRET"
           echo "REDIRECT_SECRET=$REDIRECT_SECRET" >> $GITHUB_OUTPUT
 
-      - name: Transform tenant.yaml with secrets and keyword mappings
+      - name: Transform tenant.yaml (incl. Client Grant Audiences)
         run: |
-          echo "Transforming tenant.yaml with secrets and keyword mappings..."
+          echo "Transforming tenant.yaml with secrets, keyword mappings, and client grant audiences..."
           
           cat <<'NODE_SCRIPT_EOF' > transform_script.js
           const fs = require('fs');
@@ -153,13 +153,12 @@ jobs:
           const yaml = require('js-yaml');
 
           const tenantYamlPath = path.join('./auth0_export_source', 'tenant.yaml');
-          const outputTransformedTenantYamlPath = tenantYamlPath;
+          const outputTransformedTenantYamlPath = './transformed_tenant.yaml';
           const redirectSecretValue = process.env.REDIRECT_SECRET_VALUE;
           const sourceEnv = process.env.SOURCE_ENV;
           const targetEnv = process.env.TARGET_ENV;
           const removeLocalhost = process.env.REMOVE_LOCALHOST === 'true';
           
-          // Auth0 Actions credentials for target environment
           const auth0ActionsDomain = process.env.AUTH0_ACTIONS_DOMAIN;
           const auth0ActionsClientId = process.env.AUTH0_ACTIONS_CLIENT_ID;
           const auth0ActionsClientSecret = process.env.AUTH0_ACTIONS_CLIENT_SECRET;
@@ -183,7 +182,7 @@ jobs:
             } else if (typeof obj === 'object' && obj !== null) {
               const result = {};
               for (const [key, value] of Object.entries(obj)) {
-                if (key === 'callbacks' || key === 'allowed_origins' || key === 'web_origins' || key === 'allowed_logout_urls') {
+                if (['callbacks', 'allowed_origins', 'web_origins', 'allowed_logout_urls'].includes(key)) {
                   result[key] = removeLocalhostFromArray(value);
                 } else {
                   result[key] = removeLocalhostFromObject(value);
@@ -212,11 +211,8 @@ jobs:
             }
           }
           
-          if (tenantConfig && tenantConfig.actions) {
+          if (tenantConfig?.actions) {
             tenantConfig.actions.forEach(action => injectAuth0ActionsSecrets(action));
-          }
-
-          if (tenantConfig && tenantConfig.actions) {
             const actionsToUpdate = ['[Guard] Terms of use ', '[MFA] Email OTP'];
             actionsToUpdate.forEach(actionName => {
               const targetAction = tenantConfig.actions.find(action => action.name === actionName);
@@ -227,6 +223,26 @@ jobs:
                 else targetAction.secrets.push({ name: 'REDIRECT_SECRET', value: redirectSecretValue });
               }
             });
+          }
+          
+          // ** NEW: Update client grant audiences **
+          if (tenantConfig?.clientGrants) {
+              console.log('Updating client grant audiences...');
+              const getApiEnvPart = (env) => (env === 'stage' ? 'staging' : env);
+              
+              const sourceApiEnvPart = getApiEnvPart(sourceEnv);
+              const targetApiEnvPart = getApiEnvPart(targetEnv);
+
+              const sourceAudience = `https://bdb${sourceApiEnvPart}.eu.auth0.com/api/v2/`;
+              const targetAudience = `https://bdb${targetApiEnvPart}.eu.auth0.com/api/v2/`;
+
+              console.log(`Mapping audience from '${sourceAudience}' to '${targetAudience}'`);
+              tenantConfig.clientGrants.forEach(grant => {
+                  if (grant.audience === sourceAudience) {
+                      grant.audience = targetAudience;
+                      console.log(`Updated audience for client_id: ${grant.client_id}`);
+                  }
+              });
           }
 
           tenantYamlContent = yaml.dump(tenantConfig, { lineWidth: -1, noRefs: true });
@@ -248,6 +264,83 @@ jobs:
           AUTH0_ACTIONS_CLIENT_ID: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_id }}
           AUTH0_ACTIONS_CLIENT_SECRET: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_secret }}
 
+      - name: Replace URLs in Actions and Branding Templates
+        run: |
+          echo "Replacing environment-specific URLs in Actions and Branding Template files..."
+          cat <<'NODE_SCRIPT_EOF' > replace_urls_in_files.js
+          const fs = require('fs');
+          const path = require('path');
+          const { globSync } = require('glob');
+
+          const sourceEnv = process.env.SOURCE_ENV;
+          const targetEnv = process.env.TARGET_ENV;
+          const exportDir = './auth0_export_source';
+          
+          console.log(`Starting URL replacement in files for migration from '${sourceEnv}' to '${targetEnv}'.`);
+
+          // Function to construct domain prefixes based on environment
+          const getPrefix = (env) => (env === 'prod' ? '' : `${env}.`);
+          const getBePrefix = (env) => (env === 'prod' ? 'be.' : `be${env}.`);
+
+          const sourcePrefix = getPrefix(sourceEnv);
+          const targetPrefix = getPrefix(targetEnv);
+          const sourceBePrefix = getBePrefix(sourceEnv);
+          const targetBePrefix = getBePrefix(targetEnv);
+
+          const urlMappings = {
+              [`https://${sourcePrefix}documentgenerator.bankenverband.de`]: `https://${targetPrefix}documentgenerator.bankenverband.de`,
+              [`https://${sourcePrefix}usermanagement.bankenverband.de`]: `https://${targetPrefix}usermanagement.bankenverband.de`,
+              [`https://${sourceBePrefix}portal2.bankenverband.de`]: `https://${targetBePrefix}portal2.bankenverband.de`,
+              [`https://${sourceBePrefix}elsa.bankenverband.de`]: `https://${targetBePrefix}elsa.bankenverband.de`,
+              [`https://${sourcePrefix}elsa.bankenverband.de`]: `https://${targetPrefix}elsa.bankenverband.de`,
+              [`https://${sourcePrefix}portal2.bankenverband.de`]: `https://${targetPrefix}portal2.bankenverband.de`,
+          };
+          
+          if (sourceEnv === 'dev') {
+            urlMappings[`https://dev.portal2.bankenverband.de/assets/logo.svg`] = `https://${targetPrefix}portal2.bankenverband.de/assets/logo.svg`;
+          }
+
+          const files = globSync(`${exportDir}/**/{actions,branding_templates}/**/*.{js,html}`);
+
+          if (files.length === 0) {
+              console.log("No files found in actions or branding_templates to process.");
+              return;
+          }
+
+          console.log(`Found ${files.length} files to process...`);
+
+          files.forEach(file => {
+              try {
+                  let content = fs.readFileSync(file, 'utf8');
+                  const originalContent = content;
+
+                  for (const [sourceUrl, targetUrl] of Object.entries(urlMappings)) {
+                      const sourceUrlRegex = new RegExp(sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+                      content = content.replace(sourceUrlRegex, targetUrl);
+                  }
+
+                  if (content !== originalContent) {
+                      console.log(`Updated URLs in: ${file}`);
+                      fs.writeFileSync(file, content, 'utf8');
+                  }
+              } catch (err) {
+                  console.error(`Error processing file ${file}:`, err);
+                  process.exit(1);
+              }
+          });
+
+          console.log('URL replacement in files finished successfully.');
+          NODE_SCRIPT_EOF
+
+          node replace_urls_in_files.js
+          if [ $? -ne 0 ]; then
+            echo "Error: URL replacement script failed."
+            exit 1
+          fi
+        env:
+          SOURCE_ENV: ${{ github.event.inputs.source_environment }}
+          TARGET_ENV: ${{ github.event.inputs.target_environment }}
+          
       - name: Prepare Import Config File
         run: |
           TARGET_CONFIG_PATH="Auth0/config.json"
@@ -313,31 +406,26 @@ jobs:
               ("https://" + $source_prefix_be + "elsa.bankenverband.de/"): ("https://" + $target_prefix_be + "elsa.bankenverband.de/"),
               ("https://" + $source_prefix_dot + "elsa.bankenverband.de"): ("https://" + $target_prefix_dot + "elsa.bankenverband.de"), 
               ("https://" + $source_prefix_dot + "portal2.bankenverband.de"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de"),
-              ("https://bdb" + "dev" + ".eu.auth0.com/api/v2/"): ("https://bdbexperimental.eu.auth0.com/api/v2/"),
+              # The audience mapping is now handled by the transform_script.js, but we keep the API URL mapping for other potential uses.
+              ("https://bdb" + $source_auth0_api_env_part + ".eu.auth0.com/api/v2/"): ("https://bdb" + $target_auth0_api_env_part + ".eu.auth0.com/api/v2/"),
               ("https://dev.portal2.bankenverband.de/assets/logo.svg"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de/assets/logo.svg")
             }
             ' \
             "$TARGET_CONFIG_PATH" > temp_import_config.json
           
           echo "Generated import config for ${{ github.event.inputs.target_environment }}"
-
-      - name: Debug Import Config
-        run: |
-          echo "--- START: Generated Import Config ---"
-          cat temp_import_config.json
-          echo "--- END: Generated Import Config ---"
           
       - name: Dry-Run Validation
         if: github.event.inputs.perform_import_or_validation == 'validation'
         run: |
           echo "Performing dry-run validation for target: ${{ github.event.inputs.target_environment }}..."
-          a0deploy validate --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml --log_level debug
+          a0deploy validate --config_file temp_import_config.json --input_file ./transformed_tenant.yaml
 
       - name: Import to Target Environment
         if: github.event.inputs.perform_import_or_validation == 'import'
         run: |
           echo "Starting import to target environment: ${{ github.event.inputs.target_environment }}..."
-          a0deploy import --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml
+          a0deploy import --config_file temp_import_config.json --input_file ./transformed_tenant.yaml
 
       - name: Notify Import Completion
         if: github.event.inputs.perform_import_or_validation == 'import'
