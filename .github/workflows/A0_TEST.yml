@@ -320,6 +320,12 @@ jobs:
             "$TARGET_CONFIG_PATH" > temp_import_config.json
           
           echo "Generated import config for ${{ github.event.inputs.target_environment }}"
+
+      - name: Debug Import Config
+        run: |
+          echo "--- START: Generated Import Config ---"
+          cat temp_import_config.json
+          echo "--- END: Generated Import Config ---"
           
       - name: Dry-Run Validation
         if: github.event.inputs.perform_import_or_validation == 'validation'
