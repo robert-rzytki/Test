@@ -313,7 +313,7 @@ jobs:
               ("https://" + $source_prefix_be + "elsa.bankenverband.de/"): ("https://" + $target_prefix_be + "elsa.bankenverband.de/"),
               ("https://" + $source_prefix_dot + "elsa.bankenverband.de"): ("https://" + $target_prefix_dot + "elsa.bankenverband.de"), 
               ("https://" + $source_prefix_dot + "portal2.bankenverband.de"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de"),
-              ("https://bdb" + $source_auth0_api_env_part + ".eu.auth0.com/api/v2/"): ("https://bdbexperimental.eu.auth0.com/api/v2/"),
+              ("https://bdb" + "dev" + ".eu.auth0.com/api/v2/"): ("https://bdbexperimental.eu.auth0.com/api/v2/"),
               ("https://dev.portal2.bankenverband.de/assets/logo.svg"): ("https://" + $target_prefix_dot + "portal2.bankenverband.de/assets/logo.svg")
             }
             ' \
