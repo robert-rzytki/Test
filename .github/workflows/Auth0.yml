@@ -63,43 +63,21 @@ jobs:
         id: prepare_env_names
         run: |
           SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
-          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
-          echo "source_env_name_upper=$(echo "$SOURCE_ENV_NAME" | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
-          echo "target_env_name_upper=$(echo "$TARGET_ENV_NAME" | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}
           echo "source_env_name=$SOURCE_ENV_NAME" >> $GITHUB_OUTPUT
           echo "target_env_name=$TARGET_ENV_NAME" >> $GITHUB_OUTPUT
 
-      - name: Extract Auth0 Actions Credentials for Target Environment
-        id: extract_auth0_actions_credentials
-        run: |
-          TARGET_ENV="${{ github.event.inputs.target_environment }}"
-          AUTH0_ACTIONS_DOMAINS='${{ secrets.AUTH0_ACTIONS_DOMAINS }}'
-          AUTH0_ACTIONS_CLIENT_IDS='${{ secrets.AUTH0_ACTIONS_CLIENT_IDS }}'
-          AUTH0_ACTIONS_CLIENT_SECRETS='${{ secrets.AUTH0_ACTIONS_CLIENT_SECRETS }}'
-          
-          AUTH0_ACTIONS_DOMAIN=$(echo "$AUTH0_ACTIONS_DOMAINS" | jq -r --arg env "$TARGET_ENV" '.[$env]')
-          AUTH0_ACTIONS_CLIENT_ID=$(echo "$AUTH0_ACTIONS_CLIENT_IDS" | jq -r --arg env "$TARGET_ENV" '.[$env]')
-          AUTH0_ACTIONS_CLIENT_SECRET=$(echo "$AUTH0_ACTIONS_CLIENT_SECRETS" | jq -r --arg env "$TARGET_ENV" '.[$env]')
-          
-          if [ "$AUTH0_ACTIONS_DOMAIN" = "null" ] || [ "$AUTH0_ACTIONS_CLIENT_ID" = "null" ] || [ "$AUTH0_ACTIONS_CLIENT_SECRET" = "null" ]; then
-            echo "Error: Could not extract Auth0 Actions credentials for environment: $TARGET_ENV"
-            exit 1
-          fi
-          
-          echo "::add-mask::$AUTH0_ACTIONS_DOMAIN"
-          echo "::add-mask::$AUTH0_ACTIONS_CLIENT_ID"
-          echo "::add-mask::$AUTH0_ACTIONS_CLIENT_SECRET"
-          echo "auth0_actions_domain=$AUTH0_ACTIONS_DOMAIN" >> $GITHUB_OUTPUT
-          echo "auth0_actions_client_id=$AUTH0_ACTIONS_CLIENT_ID" >> $GITHUB_OUTPUT
-          echo "auth0_actions_client_secret=$AUTH0_ACTIONS_CLIENT_SECRET" >> $GITHUB_OUTPUT
-
       - name: Set Source Auth0 Credentials and Export
+        id: source_auth0_credentials
         run: |
-          SOURCE_DOMAIN="${{ secrets[format('{0}_AUTH0_DOMAIN', env.source_env_name_upper)] }}"
-          SOURCE_CLIENT_ID="${{ secrets[format('{0}_AUTH0_CLIENT_ID', env.source_env_name_upper)] }}"
-          SOURCE_CLIENT_SECRET="${{ secrets[format('{0}_AUTH0_CLIENT_SECRET', env.source_env_name_upper)] }}"
+          SOURCE_DOMAIN="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].domain }}"
+          SOURCE_CLIENT_ID="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].migration.client_id }}"
+          SOURCE_CLIENT_SECRET="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].migration.client_secret }}"
+
+          SOURCE_ACTIONS_CLIENT_ID="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].action.client_id }}"
+          SOURCE_ACTIONS_CLIENT_SECRET="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].action.client_secret }}"
           
-          if [ -z "$SOURCE_DOMAIN" ] || [ -z "$SOURCE_CLIENT_ID" ] || [ -z "$SOURCE_CLIENT_SECRET" ]; then
+          if [ -z "$SOURCE_DOMAIN" ] || [ -z "$SOURCE_CLIENT_ID" ] || [ -z "$SOURCE_CLIENT_SECRET" ] || [ -z "$SOURCE_ACTIONS_CLIENT_ID" ] || [ -z "$SOURCE_ACTIONS_CLIENT_SECRET" ]; then
             echo "Error: Missing Auth0 credentials for source environment ${{ github.event.inputs.source_environment }}"
             exit 1
           fi
@@ -121,6 +99,10 @@ jobs:
 
           echo "Exporting from $SOURCE_DOMAIN..."
           a0deploy export --config_file temp_export_config.json --format yaml --output_folder ./auth0_export_source
+
+          echo "domain=$SOURCE_DOMAIN" >> $GITHUB_OUTPUT
+          echo "action_client_id=$SOURCE_ACTIONS_CLIENT_ID" >> $GITHUB_OUTPUT
+          echo "action_client_secret=$SOURCE_ACTIONS_CLIENT_SECRET" >> $GITHUB_OUTPUT
 
       - name: Generate REDIRECT_SECRET
         id: generate_redirect_secret
@@ -287,9 +269,9 @@ jobs:
           SOURCE_ENV: ${{ github.event.inputs.source_environment }}
           TARGET_ENV: ${{ github.event.inputs.target_environment }}
           REMOVE_LOCALHOST: ${{ github.event.inputs.remove_localhost }}
-          AUTH0_ACTIONS_DOMAIN: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_domain }}
-          AUTH0_ACTIONS_CLIENT_ID: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_id }}
-          AUTH0_ACTIONS_CLIENT_SECRET: ${{ steps.extract_auth0_actions_credentials.outputs.auth0_actions_client_secret }}
+          AUTH0_ACTIONS_DOMAIN: ${{ steps.source_auth0_credentials.outputs.domain }}
+          AUTH0_ACTIONS_CLIENT_ID: ${{ steps.source_auth0_credentials.outputs.actions_client_id }}
+          AUTH0_ACTIONS_CLIENT_SECRET: ${{ steps.source_auth0_credentials.outputs.actions_client_secret }}
 
       - name: Prepare Import Config File
         run: |
