@@ -70,16 +70,54 @@ jobs:
           TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
           echo "source_env_name=$SOURCE_ENV_NAME" >> $GITHUB_OUTPUT
           echo "target_env_name=$TARGET_ENV_NAME" >> $GITHUB_OUTPUT
-
+      - name: Get environment config
+        id: environment-config
+        run: |
+          case "${{ prepare_env_names.outputs.source_env_name }}" in
+            dev)
+              echo "source_config=${{ secrets.CREDENTIALS.dev }}" >> $GITHUB_OUTPUT
+              ;;
+            stage)
+              echo "source_config=${{ secrets.CREDENTIALS.stage }}" >> $GITHUB_OUTPUT
+              ;;
+            preprod)
+              echo "source_config=${{ secrets.CREDENTIALS.preprod }}" >> $GITHUB_OUTPUT
+              ;;
+            prod)
+              echo "source_config=${{ secrets.CREDENTIALS.prod }}" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "Unknown environment!" >&2
+              exit 1
+              ;;
+          esac
+          case "${{ steps.prepare_env_names.outputs.target_env_name }}" in
+            dev)
+              echo "target_config=${{ secrets.CREDENTIALS.dev }}" >> $GITHUB_OUTPUT
+              ;;
+            stage)
+              echo "target_config=${{ secrets.CREDENTIALS.stage }}" >> $GITHUB_OUTPUT
+              ;;
+            preprod)
+              echo "target_config=${{ secrets.CREDENTIALS.preprod }}" >> $GITHUB_OUTPUT
+              ;;
+            prod)
+              echo "target_config=${{ secrets.CREDENTIALS.prod }}" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "Unknown environment!" >&2
+              exit 1
+              ;;
+          esac
       - name: Set Source Auth0 Credentials and Export
         id: source_auth0_credentials
         run: |
-          SOURCE_DOMAIN="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].domain }}"
-          SOURCE_CLIENT_ID="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].migration.client_id }}"
-          SOURCE_CLIENT_SECRET="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].migration.client_secret }}"
+          SOURCE_DOMAIN="${{ environment-config.outputs.source_config.domain }}"
+          SOURCE_CLIENT_ID="${{ environment-config.outputs.source_config.migration.client_id }}"
+          SOURCE_CLIENT_SECRET="${{ environment-config.outputs.source_config.migration.client_secret }}"
 
-          SOURCE_ACTIONS_CLIENT_ID="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].action.client_id }}"
-          SOURCE_ACTIONS_CLIENT_SECRET="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name].action.client_secret }}"
+          SOURCE_ACTIONS_CLIENT_ID="${{ environment-config.outputs.source_config.action.client_secret }}"
+          SOURCE_ACTIONS_CLIENT_SECRET="${{ environment-config.outputs.source_config.action.client_secret }}"
           
           if [ -z "$SOURCE_DOMAIN" ] || [ -z "$SOURCE_CLIENT_ID" ] || [ -z "$SOURCE_CLIENT_SECRET" ] || [ -z "$SOURCE_ACTIONS_CLIENT_ID" ] || [ -z "$SOURCE_ACTIONS_CLIENT_SECRET" ]; then
             echo "Error: Missing Auth0 credentials for source environment ${{ github.event.inputs.source_environment }}"
@@ -285,9 +323,9 @@ jobs:
             exit 1
           fi
 
-          TARGET_DOMAIN_VALUE="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.target_env_name].domain }}"
-          TARGET_CLIENT_ID_VALUE="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.target_env_name].migration.client_id }}"
-          TARGET_CLIENT_SECRET_VALUE="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.target_env_name].migration.client_secret }}"
+          TARGET_DOMAIN_VALUE="${{ environment-config.outputs.target_config.client_id }}"
+          TARGET_CLIENT_ID_VALUE="${{ environment-config.outputs.target_config.migration.client_id }}"
+          TARGET_CLIENT_SECRET_VALUE="${{ environment-config.outputs.target_config.migration.client_secret }}"
           
           if [ -z "$TARGET_DOMAIN_VALUE" ] || [ -z "$TARGET_CLIENT_ID_VALUE" ] || [ -z "$TARGET_CLIENT_SECRET_VALUE" ]; then
             echo "Error: Missing Auth0 credentials for target environment ${{ github.event.inputs.target_environment }}"
