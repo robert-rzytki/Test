@@ -73,7 +73,7 @@ jobs:
       - name: Get environment config
         id: environment-config
         run: |
-          case "${{ prepare_env_names.outputs.source_env_name }}" in
+          case "${{ steps.prepare_env_names.outputs.source_env_name }}" in
             dev)
               echo "source_config=${{ secrets.CREDENTIALS.dev }}" >> $GITHUB_OUTPUT
               ;;
