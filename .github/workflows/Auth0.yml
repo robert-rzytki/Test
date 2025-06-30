@@ -112,12 +112,12 @@ jobs:
       - name: Set Source Auth0 Credentials and Export
         id: source_auth0_credentials
         run: |
-          SOURCE_DOMAIN="${{ environment-config.outputs.source_config.domain }}"
-          SOURCE_CLIENT_ID="${{ environment-config.outputs.source_config.migration.client_id }}"
-          SOURCE_CLIENT_SECRET="${{ environment-config.outputs.source_config.migration.client_secret }}"
+          SOURCE_DOMAIN="${{ steps.environment-config.outputs.source_config.domain }}"
+          SOURCE_CLIENT_ID="${{ steps.environment-config.outputs.source_config.migration.client_id }}"
+          SOURCE_CLIENT_SECRET="${{ steps.environment-config.outputs.source_config.migration.client_secret }}"
 
-          SOURCE_ACTIONS_CLIENT_ID="${{ environment-config.outputs.source_config.action.client_secret }}"
-          SOURCE_ACTIONS_CLIENT_SECRET="${{ environment-config.outputs.source_config.action.client_secret }}"
+          SOURCE_ACTIONS_CLIENT_ID="${{ steps.environment-config.outputs.source_config.action.client_secret }}"
+          SOURCE_ACTIONS_CLIENT_SECRET="${{ steps.environment-config.outputs.source_config.action.client_secret }}"
           
           if [ -z "$SOURCE_DOMAIN" ] || [ -z "$SOURCE_CLIENT_ID" ] || [ -z "$SOURCE_CLIENT_SECRET" ] || [ -z "$SOURCE_ACTIONS_CLIENT_ID" ] || [ -z "$SOURCE_ACTIONS_CLIENT_SECRET" ]; then
             echo "Error: Missing Auth0 credentials for source environment ${{ github.event.inputs.source_environment }}"
@@ -323,9 +323,9 @@ jobs:
             exit 1
           fi
 
-          TARGET_DOMAIN_VALUE="${{ environment-config.outputs.target_config.client_id }}"
-          TARGET_CLIENT_ID_VALUE="${{ environment-config.outputs.target_config.migration.client_id }}"
-          TARGET_CLIENT_SECRET_VALUE="${{ environment-config.outputs.target_config.migration.client_secret }}"
+          TARGET_DOMAIN_VALUE="${{ steps.environment-config.outputs.target_config.client_id }}"
+          TARGET_CLIENT_ID_VALUE="${{ steps.environment-config.outputs.target_config.migration.client_id }}"
+          TARGET_CLIENT_SECRET_VALUE="${{ steps.environment-config.outputs.target_config.migration.client_secret }}"
           
           if [ -z "$TARGET_DOMAIN_VALUE" ] || [ -z "$TARGET_CLIENT_ID_VALUE" ] || [ -z "$TARGET_CLIENT_SECRET_VALUE" ]; then
             echo "Error: Missing Auth0 credentials for target environment ${{ github.event.inputs.target_environment }}"
