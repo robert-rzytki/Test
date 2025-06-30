@@ -74,11 +74,11 @@ jobs:
         id: environment-config
         run: |
           SOURCE_ENV="${{ steps.prepare_env_names.outputs.source_env_name }}"
-          SOURCE_CONFIG=$(echo '${{ secrets.CREDENTIALS }}' | jq -r --arg env "$SOURCE_ENV" '.[$env]')
+          SOURCE_CONFIG=$(echo "${{ secrets.CREDENTIALS }}" | jq -r --arg env "$SOURCE_ENV" '.[$env]')
           echo "source_config=$SOURCE_CONFIG" >> $GITHUB_OUTPUT
 
-          TARGET_ENV="${{ steps.prepare_env_names.outputs.source_env_name }}"
-          TARGET_CONFIG=$(echo '${{ secrets.CREDENTIALS }}' | jq -r --arg env "$TARGET_ENV" '.[$env]')
+          TARGET_ENV="${{ steps.prepare_env_names.outputs.target_env_name }}"
+          TARGET_CONFIG=$(echo "${{ secrets.CREDENTIALS }}" | jq -r --arg env "$TARGET_ENV" '.[$env]')
           echo "target_config=$TARGET_CONFIG" >> $GITHUB_OUTPUT
       - name: Set Source Auth0 Credentials and Export
         id: source_auth0_credentials
