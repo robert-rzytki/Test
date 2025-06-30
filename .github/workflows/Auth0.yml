@@ -83,12 +83,12 @@ jobs:
       - name: Set Source Auth0 Credentials and Export
         id: source_auth0_credentials
         run: |
-          SOURCE_DOMAIN=$(echo '${{ steps.environment-config.source_config }}' | jq -r '.domain')
-          SOURCE_CLIENT_ID=$(echo '${{ steps.environment-config.source_config }}' | jq -r '.migration.client_id')
-          SOURCE_CLIENT_SECRET=$(echo '${{ steps.environment-config.source_config }}' | jq -r '.migration.client_secret')
+          SOURCE_DOMAIN=$(echo '${{ steps.environment-config.outputs.source_config }}' | jq -r '.domain')
+          SOURCE_CLIENT_ID=$(echo '${{ steps.environment-config.outputs.source_config }}' | jq -r '.migration.client_id')
+          SOURCE_CLIENT_SECRET=$(echo '${{ steps.environment-config.outputs.source_config }}' | jq -r '.migration.client_secret')
 
-          SOURCE_ACTIONS_CLIENT_ID=$(echo '${{ steps.environment-config.source_config }}' | jq -r '.action.client_id')
-          SOURCE_ACTIONS_CLIENT_SECRET=$(echo '${{ steps.environment-config.source_config }}' | jq -r '.action.client_secret')
+          SOURCE_ACTIONS_CLIENT_ID=$(echo '${{ steps.environment-config.outputs.source_config }}' | jq -r '.action.client_id')
+          SOURCE_ACTIONS_CLIENT_SECRET=$(echo '${{ steps.environment-config.outputs.source_config }}' | jq -r '.action.client_secret')
           
           if [ -z "$SOURCE_DOMAIN" ] || [ -z "$SOURCE_CLIENT_ID" ] || [ -z "$SOURCE_CLIENT_SECRET" ] || [ -z "$SOURCE_ACTIONS_CLIENT_ID" ] || [ -z "$SOURCE_ACTIONS_CLIENT_SECRET" ]; then
             echo "Error: Missing Auth0 credentials for source environment ${{ github.event.inputs.source_environment }}"
@@ -294,9 +294,9 @@ jobs:
             exit 1
           fi
 
-          TARGET_DOMAIN_VALUE=$(echo '${{ steps.environment-config.target_config }}' | jq -r '.domain')
-          TARGET_CLIENT_ID_VALUE=$(echo '${{ steps.environment-config.target_config }}' | jq -r '.migration.client_id')
-          TARGET_CLIENT_SECRET_VALUE=$(echo '${{ steps.environment-config.target_config }}' | jq -r '.migration.client_secret')
+          TARGET_DOMAIN_VALUE=$(echo '${{ steps.environment-config.outputs.target_config }}' | jq -r '.domain')
+          TARGET_CLIENT_ID_VALUE=$(echo '${{ steps.environment-config.outputs.target_config }}' | jq -r '.migration.client_id')
+          TARGET_CLIENT_SECRET_VALUE=$(echo '${{ steps.environment-config.outputs.target_config }}' | jq -r '.migration.client_secret')
           
           if [ -z "$TARGET_DOMAIN_VALUE" ] || [ -z "$TARGET_CLIENT_ID_VALUE" ] || [ -z "$TARGET_CLIENT_SECRET_VALUE" ]; then
             echo "Error: Missing Auth0 credentials for target environment ${{ github.event.inputs.target_environment }}"
