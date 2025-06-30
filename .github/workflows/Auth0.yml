@@ -63,7 +63,7 @@ jobs:
         id: prepare_env_names
         run: |
           SOURCE_ENV_NAME="${{ github.event.inputs.source_environment }}"
-          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}
+          TARGET_ENV_NAME="${{ github.event.inputs.target_environment }}"
           echo "source_env_name=$SOURCE_ENV_NAME" >> $GITHUB_OUTPUT
           echo "target_env_name=$TARGET_ENV_NAME" >> $GITHUB_OUTPUT
 
