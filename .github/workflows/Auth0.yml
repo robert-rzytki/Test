@@ -47,8 +47,7 @@ jobs:
     steps:
       - name: Prepare Environment Names
         run: |
-          CREDENTIALS="${{ secrets.CREDENTIALS.dev }}"
-          echo "$CREDENTIALS"
+          echo "$(echo "${{ secrets.CREDENTIALS }}" | jq -r --arg env "$SOURCE_ENV" '.dev')"
       - name: Checkout Repository
         uses: actions/checkout@v4
 
