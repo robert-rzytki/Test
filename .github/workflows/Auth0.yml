@@ -47,7 +47,7 @@ jobs:
     steps:
       - name: Prepare Environment Names
         run: |
-          CREDENTIALS="${{ secrets.CREDENTIALS[steps.prepare_env_names.outputs.source_env_name] }}"
+          CREDENTIALS="${{ secrets.CREDENTIALS.dev }}"
           echo "$CREDENTIALS"
       - name: Checkout Repository
         uses: actions/checkout@v4
