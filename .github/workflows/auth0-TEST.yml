@@ -113,7 +113,7 @@ jobs:
             exit 1
           fi
 
-          # Use the environment variables to configure the export
+          # Using the environment variables to configure the export
           jq \
           --arg domain "$SOURCE_DOMAIN" \
           --arg client_id "$SOURCE_CLIENT_ID" \
@@ -298,7 +298,7 @@ jobs:
             exit 1
           fi
           
-          # Use the target environment variables to create the import config
+          # Using the target environment variables to create the import config
           jq \
             --arg target_domain "$TARGET_DOMAIN" \
             --arg target_client_id "$TARGET_CLIENT_ID" \
