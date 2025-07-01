@@ -34,8 +34,7 @@ on:
         type: choice
         options:
           - import
-          - validation
-        default: validation
+        default: import
 
 jobs:
   Perform_Auth0_Tenant_Migration:
