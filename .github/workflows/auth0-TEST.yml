@@ -12,7 +12,6 @@ on:
           - stage
           - preprod
           - prod
-        default: ''
       target_environment:
         description: 'Target Auth0 Tenant'
         required: true
@@ -22,14 +21,13 @@ on:
           - stage
           - preprod
           - prod
-        default: ''
       remove_localhost:
         description: 'Remove localhost entries'
         required: false
         type: boolean
         default: true
       perform_import:
-        description: 'Perform import or validation'
+        description: 'Perform import'
         required: true
         type: boolean
         default: false
@@ -46,6 +44,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+
+      - name: Validate Source and Target Environments
+        run: |
+          if [ "${{ github.event.inputs.source_environment }}" == "${{ github.event.inputs.target_environment }}" ]; then
+            echo "Error: Source and target environments cannot be the same."
+            exit 1
+          fi
 
       - name: Install Auth0 Deploy CLI, jq, and Node.js Dependencies
         run: |
@@ -129,7 +134,7 @@ jobs:
 
       - name: Transform Tenant Config and Replace URLs
         env:
-          # Use the environment variables set in the 'Parse Credentials' step
+          # Using the environment variables set in the 'Parse Credentials' step
           REDIRECT_SECRET_VALUE: ${{ steps.generate_redirect_secret.outputs.REDIRECT_SECRET }}
           SOURCE_ENV: ${{ github.event.inputs.source_environment }}
           TARGET_ENV: ${{ github.event.inputs.target_environment }}
@@ -261,7 +266,7 @@ jobs:
                       if (existing) existing.value = value;
                   }
                   
-                  if (['[Guard] Terms of use ', '[MFA] Email OTP'].includes(action.name)) {
+                  if (['[Guard] Terms of use ', '[MFA] Email OTP', '[Guard] Portal access'].includes(action.name)) {
                       const secret = action.secrets.find(s => s.name === 'REDIRECT_SECRET');
                       if (secret) secret.value = redirectSecretValue;
                       else action.secrets.push({ name: 'REDIRECT_SECRET', value: redirectSecretValue });
