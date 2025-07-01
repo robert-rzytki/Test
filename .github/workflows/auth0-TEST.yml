@@ -12,7 +12,6 @@ on:
           - stage
           - preprod
           - prod
-        default: dev
       target_environment:
         description: 'Target Auth0 Tenant'
         required: true
@@ -22,7 +21,6 @@ on:
           - stage
           - preprod
           - prod
-        default: prod
       remove_localhost:
         description: 'Remove localhost entries'
         required: false
@@ -34,7 +32,6 @@ on:
         type: choice
         options:
           - import
-        default: import
 
 jobs:
   Perform_Auth0_Tenant_Migration:
