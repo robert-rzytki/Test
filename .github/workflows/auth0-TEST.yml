@@ -6,23 +6,23 @@ on:
       source_environment:
         description: 'Source Auth0 Tenant'
         required: true
-        default: ''
         type: choice
         options:
           - dev
           - stage
           - preprod
           - prod
+        default: ''
       target_environment:
         description: 'Target Auth0 Tenant'
         required: true
-        default: ''
         type: choice
         options:
           - dev
           - stage
           - preprod
           - prod
+        default: ''
       remove_localhost:
         description: 'Remove localhost entries'
         required: false
@@ -32,9 +32,9 @@ on:
         description: 'Perform import or validation'
         required: true
         type: choice
-        default: ''
         options:
           - import
+        default: ''
 
 jobs:
   Perform_Auth0_Tenant_Migration:
