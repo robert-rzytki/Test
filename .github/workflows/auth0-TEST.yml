@@ -28,13 +28,11 @@ on:
         required: false
         type: boolean
         default: true
-      perform_import_or_validation:
+      perform_import:
         description: 'Perform import or validation'
         required: true
-        type: choice
-        options:
-          - import
-        default: ''
+        type: boolean
+        default: false
 
 jobs:
   Perform_Auth0_Tenant_Migration:
@@ -311,13 +309,13 @@ jobs:
           echo "Generated import config for ${{ github.event.inputs.target_environment }}"
 
       - name: Import to Target Environment
-        if: github.event.inputs.perform_import_or_validation == 'import'
+        if: github.event.inputs.perform_import == 'true'
         run: |
           echo "Starting import to target environment: ${{ github.event.inputs.target_environment }}..."
           a0deploy import --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml
 
       - name: Notify Import Completion
-        if: github.event.inputs.perform_import_or_validation == 'import'
+        if: github.event.inputs.perform_import == 'true'
         run: |
           echo "🎉 Auth0 tenant import to ${{ github.event.inputs.target_environment }} has successfully completed!"
           echo "Please review the workflow run logs for details."
