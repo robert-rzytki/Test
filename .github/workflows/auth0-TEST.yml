@@ -309,12 +309,6 @@ jobs:
             "$TARGET_CONFIG_PATH" > temp_import_config.json
           
           echo "Generated import config for ${{ github.event.inputs.target_environment }}"
-          
-      - name: Dry-Run Validation
-        if: github.event.inputs.perform_import_or_validation == 'validation'
-        run: |
-          echo "Performing dry-run validation for target: ${{ github.event.inputs.target_environment }}..."
-          a0deploy import --config_file temp_import_config.json --input_file ./auth0_export_source/tenant.yaml --dry_run
 
       - name: Import to Target Environment
         if: github.event.inputs.perform_import_or_validation == 'import'
