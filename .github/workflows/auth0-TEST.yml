@@ -6,6 +6,7 @@ on:
       source_environment:
         description: 'Source Auth0 Tenant'
         required: true
+        default: ''
         type: choice
         options:
           - dev
@@ -15,6 +16,7 @@ on:
       target_environment:
         description: 'Target Auth0 Tenant'
         required: true
+        default: ''
         type: choice
         options:
           - dev
@@ -30,6 +32,7 @@ on:
         description: 'Perform import or validation'
         required: true
         type: choice
+        default: ''
         options:
           - import
 
